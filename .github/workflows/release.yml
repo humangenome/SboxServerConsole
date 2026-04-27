@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Publish single-file Windows binary
+        run: |
+          dotnet publish src/SboxServerConsole.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -o publish
+
+      - name: Stage release zip
+        shell: pwsh
+        run: |
+          $stage = "stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item publish/SboxServerConsole.exe $stage/
+          Copy-Item README.md $stage/
+          Copy-Item LICENSE $stage/ -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$stage/*" -DestinationPath SboxServerConsole.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SboxServerConsole
+          path: |
+            publish/SboxServerConsole.exe
+            SboxServerConsole.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            publish/SboxServerConsole.exe
+            SboxServerConsole.zip
+          generate_release_notes: true

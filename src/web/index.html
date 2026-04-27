@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SboxServerConsole</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; --bg:#1a1a1f; --panel:#22232a; --border:#2c2d36; --fg:#e8e8ec; --mute:#8a8d99; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --ipt:#15161b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; background:var(--panel); }
+  header h1 { font-size:14px; margin:0; font-weight:600; }
+  header .pill { font-size:11px; padding:2px 8px; border-radius:99px; background:#0d0e12; border:1px solid var(--border); color:var(--mute); }
+  header .ok { color:var(--ok); border-color:var(--ok); }
+  header .bad { color:var(--bad); border-color:var(--bad); }
+  header .right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+  input[type=password], input[type=text] { background:var(--ipt); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:5px 8px; font:inherit; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:5px 12px; cursor:pointer; font:inherit; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid var(--border); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  main { display:grid; grid-template-columns: 1fr 320px; gap:0; height: calc(100vh - 44px); }
+  #console { background:#0e0f13; padding:8px 12px; overflow-y:auto; font:12px/1.4 ui-monospace,Menlo,Consolas,monospace; }
+  #console .ln { white-space:pre-wrap; word-break:break-word; }
+  #console .ln.input  { color:#67e8f9; }
+  #console .ln.system { color:var(--mute); font-style:italic; }
+  #console .ln.stderr { color:#fda4af; }
+  aside { border-left:1px solid var(--border); background:var(--panel); display:flex; flex-direction:column; overflow:hidden; }
+  .tabs { display:flex; border-bottom:1px solid var(--border); }
+  .tabs button { flex:1; background:transparent; color:var(--mute); border-radius:0; padding:9px 0; border-right:1px solid var(--border); }
+  .tabs button:last-child { border-right:0; }
+  .tabs button.active { color:var(--fg); background:var(--bg); }
+  .panel { flex:1; overflow-y:auto; padding:10px 12px; display:none; }
+  .panel.active { display:block; }
+  .row { display:flex; gap:6px; padding:5px 0; border-bottom:1px solid var(--border); align-items:center; }
+  .row .name { flex:1; }
+  .row .meta { color:var(--mute); font-size:11px; }
+  .row button { padding:3px 8px; font-size:11px; }
+  .row button.del { background:var(--bad); }
+  form.add { display:grid; grid-template-columns:1fr; gap:5px; padding-top:8px; }
+  form.add input { font-size:12px; }
+  .empty { color:var(--mute); padding:14px 0; text-align:center; font-style:italic; font-size:12px; }
+  footer { padding:8px 12px; border-top:1px solid var(--border); display:flex; gap:6px; background:#0e0f13; }
+  footer input { flex:1; font-family: ui-monospace,Menlo,Consolas,monospace; }
+  #metrics { padding:0 12px; font-size:11px; color:var(--mute); border-top:1px solid var(--border); padding:8px 12px; line-height:1.7; }
+  #metrics b { color:var(--fg); font-weight:500; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SboxServerConsole</h1>
+  <span id="pill-child" class="pill">child: ?</span>
+  <span id="pill-uptime" class="pill">uptime: ?</span>
+  <span id="pill-stream" class="pill">stream: idle</span>
+  <div class="right">
+    <input type="password" id="pwd" placeholder="rcon-password" autocomplete="current-password">
+    <button id="connect">Connect</button>
+  </div>
+</header>
+<main>
+  <section id="console" aria-live="polite"></section>
+  <aside>
+    <div class="tabs">
+      <button data-tab="players" class="active">Players</button>
+      <button data-tab="bans">Bans</button>
+      <button data-tab="scheduler">Scheduler</button>
+    </div>
+    <div class="panel active" id="tab-players">
+      <div id="players-list"></div>
+    </div>
+    <div class="panel" id="tab-bans">
+      <div id="bans-list"></div>
+      <form class="add" id="ban-add">
+        <input name="steamid" placeholder="steamid" required>
+        <input name="reason" placeholder="reason (optional)">
+        <button type="submit">Add ban</button>
+      </form>
+    </div>
+    <div class="panel" id="tab-scheduler">
+      <div id="scheduler-list"></div>
+      <form class="add" id="sched-add">
+        <input name="id" placeholder="job id" required>
+        <input name="schedule" placeholder='schedule  (e.g. "@every 30m"  or  "0 */4 * * *")' required>
+        <input name="command" placeholder="command (sent verbatim)" required>
+        <button type="submit">Add job</button>
+      </form>
+    </div>
+    <div id="metrics"></div>
+  </aside>
+</main>
+<footer>
+  <input id="cmd" placeholder='type a command, press enter (eg. "say hello")' autocomplete="off">
+  <button id="send">Send</button>
+</footer>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const consoleEl = $("#console");
+  const pwdEl = $("#pwd");
+  const pillChild = $("#pill-child");
+  const pillUptime = $("#pill-uptime");
+  const pillStream = $("#pill-stream");
+  const cmdEl = $("#cmd");
+  const sendBtn = $("#send");
+  const metricsEl = $("#metrics");
+  let pwd = sessionStorage.getItem("ssc_pwd") || "";
+  if (pwd) pwdEl.value = pwd;
+  let evt = null;
+  let connected = false;
+
+  function authHeaders() { return pwd ? { "X-RCON-Password": pwd } : {}; }
+  async function getJson(p) {
+    const r = await fetch(p, { headers: authHeaders() });
+    if (!r.ok) throw new Error(`${p}: ${r.status}`);
+    return r.json();
+  }
+  async function postJson(p, body) {
+    const r = await fetch(p, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
+  }
+  async function delJson(p) {
+    const r = await fetch(p, { method: "DELETE", headers: authHeaders() });
+    return { ok: r.ok, status: r.status };
+  }
+
+  function appendLine(stream, text, seq) {
+    const div = document.createElement("div");
+    div.className = "ln " + stream;
+    div.textContent = text;
+    if (seq != null) div.dataset.seq = seq;
+    const atBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 50;
+    consoleEl.appendChild(div);
+    while (consoleEl.children.length > 2000) consoleEl.removeChild(consoleEl.firstChild);
+    if (atBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+
+  async function loadHistory() {
+    consoleEl.textContent = "";
+    try {
+      const h = await getJson("/history?count=300");
+      for (const e of h.entries) appendLine(e.stream, e.line, e.seq);
+    } catch (e) { appendLine("system", `history error: ${e.message}`); }
+  }
+  function openStream() {
+    if (evt) try { evt.close(); } catch {}
+    pillStream.textContent = "stream: connecting";
+    pillStream.classList.remove("ok", "bad");
+    const url = `/stream?password=${encodeURIComponent(pwd)}`;
+    evt = new EventSource(url);
+    evt.onopen = () => { pillStream.textContent = "stream: live"; pillStream.classList.add("ok"); };
+    evt.onerror = () => { pillStream.textContent = "stream: down"; pillStream.classList.add("bad"); };
+    evt.onmessage = (m) => {
+      try {
+        const d = JSON.parse(m.data);
+        appendLine(d.stream, d.line, d.seq);
+      } catch {}
+    };
+  }
+  async function refreshHealth() {
+    try {
+      const h = await getJson("/status");
+      pillChild.textContent = `child: ${h.child_alive ? "alive" : "dead"} (pid ${h.child_pid})`;
+      pillChild.classList.toggle("ok", !!h.child_alive);
+      pillChild.classList.toggle("bad", !h.child_alive);
+      const s = h.uptime_sec;
+      pillUptime.textContent = `uptime: ${formatUptime(s)}`;
+    } catch (e) {
+      pillChild.textContent = "child: ?";
+      pillChild.classList.remove("ok"); pillChild.classList.add("bad");
+    }
+  }
+  function formatUptime(s) {
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s/60)}m`;
+    if (s < 86400) return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+    return `${Math.floor(s/86400)}d ${Math.floor((s%86400)/3600)}h`;
+  }
+  async function refreshPlayers() {
+    const list = $("#players-list");
+    try {
+      const data = await getJson("/players");
+      if (!data.players?.length) { list.innerHTML = '<div class="empty">no players online</div>'; return; }
+      list.innerHTML = "";
+      for (const p of data.players) {
+        const row = document.createElement("div"); row.className = "row";
+        row.innerHTML = `<div class="name">${escapeHtml(p.name || "(unnamed)")}<div class="meta">${escapeHtml(p.steamid)}</div></div>
+                         <button class="ghost" data-kick="${escapeHtml(p.steamid)}">kick</button>
+                         <button class="del" data-ban="${escapeHtml(p.steamid)}">ban</button>`;
+        list.appendChild(row);
+      }
+    } catch (e) { list.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+  }
+  async function refreshBans() {
+    const list = $("#bans-list");
+    try {
+      const data = await getJson("/bans");
+      if (!data.bans?.length) { list.innerHTML = '<div class="empty">no bans</div>'; return; }
+      list.innerHTML = "";
+      for (const b of data.bans) {
+        const row = document.createElement("div"); row.className = "row";
+        row.innerHTML = `<div class="name">${escapeHtml(b.steamid)}<div class="meta">${escapeHtml(b.reason || "(no reason)")} · ${escapeHtml(b.added_at?.slice(0,19) || "")}</div></div>
+                         <button class="del" data-unban="${escapeHtml(b.steamid)}">unban</button>`;
+        list.appendChild(row);
+      }
+    } catch (e) { list.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+  }
+  async function refreshScheduler() {
+    const list = $("#scheduler-list");
+    try {
+      const data = await getJson("/scheduler");
+      if (!data.jobs?.length) { list.innerHTML = '<div class="empty">no scheduled jobs</div>'; return; }
+      list.innerHTML = "";
+      for (const j of data.jobs) {
+        const row = document.createElement("div"); row.className = "row";
+        const next = j.next_fire_at ? new Date(j.next_fire_at).toLocaleString() : "never";
+        row.innerHTML = `<div class="name">${escapeHtml(j.id)}<div class="meta">${escapeHtml(j.schedule)} → ${escapeHtml(j.command)}<br>next: ${escapeHtml(next)} · runs: ${j.run_count}</div></div>
+                         <button class="ghost" data-toggle="${escapeHtml(j.id)}" data-state="${j.enabled}">${j.enabled ? "disable" : "enable"}</button>
+                         <button class="del" data-deljob="${escapeHtml(j.id)}">del</button>`;
+        list.appendChild(row);
+      }
+    } catch (e) { list.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+  }
+  async function refreshMetrics() {
+    try {
+      const m = await getJson("/metrics");
+      metricsEl.innerHTML = `
+        <div><b>execute</b> ok ${m.execute.success} / fail ${m.execute.failure} / auth-deny ${m.execute.auth_failure}</div>
+        <div><b>stream</b> active ${m.stream.clients_active} / total ${m.stream.clients_total}</div>
+        <div><b>requests</b> hist ${m.requests.history} · status ${m.requests.status} · health ${m.requests.health}</div>
+      `;
+    } catch (e) { metricsEl.textContent = ""; }
+  }
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+  document.querySelectorAll(".tabs button").forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".tabs button").forEach(x => x.classList.remove("active"));
+      document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      $("#tab-" + b.dataset.tab).classList.add("active");
+    });
+  });
+
+  $("#connect").addEventListener("click", async () => {
+    pwd = pwdEl.value;
+    sessionStorage.setItem("ssc_pwd", pwd);
+    await loadHistory();
+    openStream();
+    await refreshHealth();
+    await refreshPlayers();
+    await refreshBans();
+    await refreshScheduler();
+    await refreshMetrics();
+    connected = true;
+  });
+
+  async function send() {
+    const c = cmdEl.value.trim();
+    if (!c) return;
+    cmdEl.value = "";
+    sendBtn.disabled = true;
+    const r = await postJson("/execute?collect=1", { cmd: c });
+    sendBtn.disabled = false;
+    if (!r.ok) appendLine("system", `execute failed: ${r.status} ${JSON.stringify(r.body)}`);
+  }
+  sendBtn.addEventListener("click", send);
+  cmdEl.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+
+  document.body.addEventListener("click", async (e) => {
+    const t = e.target;
+    if (t.dataset.kick) {
+      await postJson("/execute", { cmd: `kick ${t.dataset.kick}` });
+    } else if (t.dataset.ban) {
+      const reason = prompt(`reason for banning ${t.dataset.ban}?`, "") || "";
+      const r = await postJson("/bans", { steamid: t.dataset.ban, reason });
+      if (r.ok) { await refreshBans(); await refreshPlayers(); }
+    } else if (t.dataset.unban) {
+      const r = await delJson(`/bans/${encodeURIComponent(t.dataset.unban)}`);
+      if (r.ok) await refreshBans();
+    } else if (t.dataset.toggle) {
+      const on = t.dataset.state === "true";
+      await postJson(`/scheduler/${encodeURIComponent(t.dataset.toggle)}/${on ? "disable" : "enable"}`, {});
+      await refreshScheduler();
+    } else if (t.dataset.deljob) {
+      const r = await delJson(`/scheduler/${encodeURIComponent(t.dataset.deljob)}`);
+      if (r.ok) await refreshScheduler();
+    }
+  });
+
+  document.getElementById("ban-add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const r = await postJson("/bans", { steamid: f.steamid.value, reason: f.reason.value });
+    if (r.ok) { f.reset(); await refreshBans(); }
+  });
+  document.getElementById("sched-add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const r = await postJson("/scheduler", {
+      id: f.id.value, schedule: f.schedule.value, command: f.command.value,
+    });
+    if (r.ok) { f.reset(); await refreshScheduler(); }
+    else alert("error: " + JSON.stringify(r.body));
+  });
+
+  setInterval(() => { if (connected) { refreshHealth(); refreshPlayers(); refreshBans(); refreshScheduler(); refreshMetrics(); } }, 5000);
+
+  if (pwd) $("#connect").click();
+})();
+</script>
+</body>
+</html>
