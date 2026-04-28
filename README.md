@@ -358,9 +358,9 @@ If your environment policy forbids running unsigned binaries, you can build from
 
 ### From the Local Terminal
 
-When SboxServerConsole is launched from an interactive Windows or Linux terminal, the same window mirrors the child server's live stdout and accepts direct console commands. Type a server command and press Enter; it is forwarded to the running s&box process just like a dashboard, HTTP API, or RCON command.
+When SboxServerConsole is launched from an interactive Windows or Linux terminal, the same window mirrors the filtered child server stdout and accepts direct console commands. Type a server command and press Enter; it is forwarded to the running s&box process just like a dashboard, HTTP API, or RCON command.
 
-The local terminal mirror is intentionally more verbose than the dashboard: it prints child output before the dashboard suppression filter runs. The mirror is best-effort under extreme terminal backpressure so a slow local console cannot block the server's output pipe. Use `--suppress-regex ""` only if you also want the HTTP history, stream, and dashboard to keep the normally-suppressed frame/status lines.
+The local terminal mirror uses the same suppression filter as `/history`, `/stream`, and the dashboard so high-frequency frame/resource timing lines do not overwrite typed input. The mirror is best-effort under extreme terminal backpressure so a slow local console cannot block the server's output pipe. Use `--suppress-regex ""` only if you want the local terminal, HTTP history, stream, and dashboard to keep normally-suppressed timing/status lines.
 
 ### From the Dashboard
 

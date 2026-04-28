@@ -4,6 +4,13 @@ All notable changes to S&box Server Console are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-04-28
+
+### Fixed
+
+- **Local terminal spam filtering.** The Windows/Linux terminal mirror now uses the same suppression filter as `/history`, `/stream`, and the dashboard, so high-frequency s&box timing/resource reload lines no longer clobber typed console commands.
+- **Default suppression coverage.** The built-in filter now also drops startup resource reload and cleanup baseline chatter while still preserving errors, connect/disconnect messages, and operator command output.
+
 ## [1.3.0] - 2026-04-28
 
 ### Added

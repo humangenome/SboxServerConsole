@@ -254,8 +254,8 @@ public sealed class ServerProcess : IDisposable
         var line = sb.ToString().TrimEnd();
         sb.Clear();
         if (line.Length == 0) return;
-        _localConsoleMirror?.Invoke(line);
         if (_suppressRe is not null && _suppressRe.IsMatch(line)) return;
+        _localConsoleMirror?.Invoke(line);
         if (TryFormatStructuredChatLine(line, out var chatLine))
         {
             _buffer.Append("chat", chatLine);

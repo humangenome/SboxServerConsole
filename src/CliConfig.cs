@@ -130,15 +130,17 @@ public sealed class CliConfig
             @"\b(?<name>\S+)\s+\[(?<steamid>\d{17})\]\s+is\s+connecting\b");
         string disconnectLineRegex = Get("disconnect-regex",
             @"SteamIdSocket\s*-\s*steamid:\d+:\s*Disconnection\s*\((?<steamid>\d{17})\)|SteamIdSocket\s*-\s*steamid:(?<steamid>\d{17}):\s*Disconnection");
-        // Frame-stats + running-status header are pure noise (emitted every tick).
+        // Frame-stats, running-status header, and startup resource-reload spam are pure noise.
         // sbox concatenates them into one logical line through the ConPTY stream:
         //   "<hostname> (n/max) [h:mm:ss]   <padding>   Physics F.FFms, ... Network F.FFms"
         // The first regex branch catches that combined shape via the unique
-        // "(n/m) [h:mm:ss]" marker, the second catches a stand-alone frame-stats line.
+        // "(n/m) [h:mm:ss]" marker, the second catches a stand-alone frame-stats line,
+        // and the final branches catch high-volume reload/baseline chatter that makes
+        // an RDP console unusable for typing commands.
         // Engine errors ("11:54:58 engine/R Error ...") and connect lines (no brackets) are unaffected.
         // Override with --suppress-regex (pass empty string to disable suppression).
         string suppressLineRegex = Get("suppress-regex",
-            @"\(\d+/\d+\)\s+\[\d+:\d{2}:\d{2}\]|^\w+\s+[\d.]+ms,");
+            @"\(\d+/\d+\)\s+\[\d+:\d{2}:\d{2}\]|^\w+\s+[\d.]+ms,|\bReloaded\s+\d+\s+resident\s+symlinked\s+resources\s+in\s+\d+ms\b|\bCleanupSystem:\s+Captured\s+baseline\s+with\s+\d+\s+objects\.");
         bool dashboardEnabled = !GetBool("dashboard-disabled", false);
         bool autoRestart = !GetBool("no-auto-restart", false);
         int restartBackoffSeconds = Math.Clamp(GetInt("restart-backoff-sec", 5), 1, 600);
@@ -254,7 +256,7 @@ public sealed class CliConfig
               --disconnect-regex <re>   regex with named (?<steamid>...) capture
                                         default matches sbox "SteamIdSocket - steamid:N: Disconnection"
               --suppress-regex <re>     drop matching stdout lines BEFORE buffer/stream/dashboard
-                                        default suppresses sbox per-frame stats and status header
+                                        default suppresses sbox per-frame stats, status header, and reload spam
                                         (pass empty string to disable suppression)
               --scheduler <path>        JSON scheduled-commands store
               --logs-dir <path>         directory exposed via /logs (read-only)
