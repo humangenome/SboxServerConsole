@@ -2,11 +2,11 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
-[![Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](#)
+[![Platform: Windows + Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue.svg)](#installation)
 [![Source RCON](https://img.shields.io/badge/Source_RCON-Built--in-green.svg)](https://developer.valvesoftware.com/wiki/Source_RCON_Protocol)
 [![s&box](https://img.shields.io/badge/s%26box-Dedicated_Server-darkred.svg)](https://steamdb.info/app/1892930/)
 
-Everything your s&box dedicated server is missing. Source RCON, a live web console, A2S player tracking, banlist enforcement, scheduled commands, lifecycle control, auto-restart on crash, audit log, and Discord notifications. No s&box code changes required.
+Everything your s&box dedicated server is missing. Source RCON, a live web console, A2S player tracking, banlist enforcement, scheduled commands, lifecycle control, auto-restart on crash, audit log, and Discord notifications. Runs on Windows and Linux. No s&box code changes required.
 
 > **Recommended Hosting:** Get s&box server hosting with S&box Server Console pre-installed at [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=readme&utm_campaign=sbox_server_console)
 
@@ -144,7 +144,7 @@ Append-only JSONL of every `/execute`, `/chat`, RCON command, banlist mutation, 
 ```
 
 ### Process Supervision
-Win32 Job Object kills the entire child tree on wrapper exit. No orphaned `sbox-server.exe` after a crash. ConPTY gives the child a real Windows console so it accepts stdin commands and emits readable stdout.
+Windows uses a Win32 Job Object so the entire child tree dies with the wrapper, and ConPTY gives the child a real Windows console so it accepts stdin commands and emits readable stdout. Linux uses pipe-redirected stdin/stdout (sbox-server is a normal .NET console app on Linux, no PTY needed) and `Process.Kill(entireProcessTree:true)` for tree shutdown. On Linux a graceful Dispose is required for tree death; deploy under systemd with `KillMode=mixed` (see [`examples/sboxserverconsole.service`](examples/sboxserverconsole.service)) if you need the cgroup to reap orphans on hard parent crashes.
 
 ---
 
@@ -193,55 +193,57 @@ By default the HTTP and RCON listeners bind `127.0.0.1` (localhost-only). To acc
 
 ## Installation
 
-You need a working s&box Dedicated Server on Windows. Set one up via [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) using app `1892930` (the anonymous-downloadable s&box server tool — see [SteamDB](https://steamdb.info/app/1892930/)):
+S&box Server Console runs on Windows (x64) and Linux (x64). Pick the section for your platform.
 
-```
+### Common to both: install the s&box Dedicated Server
+
+Use [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) with app `1892930` (the anonymous-downloadable s&box server tool — see [SteamDB](https://steamdb.info/app/1892930/)):
+
+```bash
+# Windows
 steamcmd +login anonymous +force_install_dir "C:\sbox-server" +app_update 1892930 validate +quit
+
+# Linux
+./steamcmd.sh +login anonymous +force_install_dir /opt/sbox-server +app_update 1892930 validate +quit
 ```
 
-For the staging branch (testing, may not be visible to public-branch clients):
-
-```
-steamcmd +login anonymous +force_install_dir "C:\sbox-server" +app_update 1892930 -beta staging validate +quit
-```
-
-### Step 1: Download
-
-Grab the latest `SboxServerConsole.zip` from [GitHub Releases](https://github.com/HumanGenome/SboxServerConsole/releases/latest) and extract it next to `sbox-server.exe`.
-
-### Step 2: Configure
-
-Copy `examples/config.example.json` to `config.json` and edit the paths + password:
-
-```json
-{
-  "exe": "C:\\sbox-dedicated\\sbox-server.exe",
-  "game-dir": "C:\\sbox-dedicated",
-  "child-args": "+game facepunch.sandbox facepunch.flatgrass +port 27015 +net_query_port 27015 +hostname \"My S&box Server\"",
-  "rcon-password": "ChooseAStrongPassword",
-  "bind": "127.0.0.1",
-  "audit-log": "C:\\sbox-dedicated\\sboxconsole\\audit.jsonl",
-  "banlist": "C:\\sbox-dedicated\\sboxconsole\\bans.json",
-  "scheduler": "C:\\sbox-dedicated\\sboxconsole\\schedule.json",
-  "logs-dir": "C:\\sbox-dedicated\\logs",
-  "connect-regex": "Player connected: (?<name>[^\\s]+) \\((?<steamid>\\d+)\\)",
-  "disconnect-regex": "Player disconnected: \\(?<steamid>\\d+\\)"
-}
-```
+For the staging branch, append `-beta staging` to the `+app_update` line.
 
 `child-args` follows Facepunch's official [dedicated-server flag syntax](https://sbox.game/dev/doc/networking/dedicated-servers): `+game <gamePackage> [mapPackage]` is a single flag taking one or two positional arguments. Optional flags include `+net_game_server_token <32-hex>` for a persistent SteamID (register at [steamcommunity.com/dev/managegameservers](https://steamcommunity.com/dev/managegameservers) using app ID `1892930`) and `+extensions "addon1;addon2"` for semicolon-separated addon loading.
 
 `--listen-port` defaults to `+port + 4` (HTTP), `--rcon-port` defaults to `+port + 5` (Source RCON), and `--query-port` is inferred from `+net_query_port`.
 
-### Step 3: Run It
+---
+
+### Windows (x64)
+
+**Step 1.** Download `SboxServerConsole.exe` (or `SboxServerConsole-win-x64.zip` for binary + scripts + examples) from the [latest release](https://github.com/HumanGenome/SboxServerConsole/releases/latest) and drop it next to `sbox-server.exe`.
+
+**Step 2.** Copy `examples/config.example.json` to `config.json` and edit the paths + password:
+
+```json
+{
+  "exe": "C:\\sbox-server\\sbox-server.exe",
+  "game-dir": "C:\\sbox-server",
+  "child-args": "+game facepunch.sandbox facepunch.flatgrass +port 27015 +net_query_port 27015 +hostname \"My S&box Server\"",
+  "rcon-password": "ChooseAStrongPassword",
+  "bind": "127.0.0.1",
+  "audit-log": "C:\\sbox-server\\sboxconsole\\audit.jsonl",
+  "banlist": "C:\\sbox-server\\sboxconsole\\bans.json",
+  "scheduler": "C:\\sbox-server\\sboxconsole\\schedule.json",
+  "logs-dir": "C:\\sbox-server\\logs"
+}
+```
+
+**Step 3.** Run it:
 
 ```powershell
 .\SboxServerConsole.exe --config-file .\config.json
 ```
 
-That's it. The dashboard URL and port map print on startup. Open the dashboard, paste your password, and you're driving the server.
+The dashboard URL and port map print on startup.
 
-### Step 4 (optional): Run as a Windows Service
+**Step 4 (optional).** Install as a Windows service:
 
 ```powershell
 # Run as Administrator
@@ -255,15 +257,75 @@ The script registers the service with autostart and restart-on-failure baked in 
 
 ---
 
+### Linux (x64)
+
+Tested on Ubuntu 22.04 LTS and Debian 12. Any glibc-based distro from the last few years should work.
+
+**Step 1.** Download `SboxServerConsole-linux-x64.tar.gz` from the [latest release](https://github.com/HumanGenome/SboxServerConsole/releases/latest) and extract it next to `sbox-server.sh`:
+
+```bash
+cd /opt/sbox-server
+curl -L -o sboxconsole.tar.gz https://github.com/HumanGenome/SboxServerConsole/releases/latest/download/SboxServerConsole-linux-x64.tar.gz
+tar -xzf sboxconsole.tar.gz
+chmod +x SboxServerConsole
+```
+
+**Step 2.** Copy `examples/config.linux.example.json` to `sboxconsole.json` and edit the paths + password:
+
+```json
+{
+  "exe": "/opt/sbox-server/sbox-server.sh",
+  "game-dir": "/opt/sbox-server",
+  "child-args": "+game facepunch.sandbox facepunch.flatgrass +port 27015 +net_query_port 27015 +hostname \"My S&box Server\"",
+  "rcon-password": "ChooseAStrongPassword",
+  "bind": "127.0.0.1",
+  "audit-log": "/var/log/sboxconsole/audit.jsonl",
+  "banlist": "/var/lib/sboxconsole/banlist.json",
+  "scheduler": "/var/lib/sboxconsole/scheduler.json",
+  "logs-dir": "/var/log/sboxconsole"
+}
+```
+
+`exe` points at Facepunch's `sbox-server.sh` launcher (which `exec`s into `dotnet sbox-server.dll`). You can also point `exe` at `dotnet` directly and put `sbox-server.dll +game ...` in `child-args` if you'd rather skip the shell wrapper.
+
+**Step 3.** Run it:
+
+```bash
+./SboxServerConsole --config-file ./sboxconsole.json
+```
+
+**Step 4 (optional).** Install as a systemd service:
+
+```bash
+sudo install -d /var/log/sboxconsole /var/lib/sboxconsole
+sudo cp examples/sboxserverconsole.service /etc/systemd/system/
+# Edit User=, ExecStart=, WorkingDirectory= in the unit to match your install
+sudo systemctl daemon-reload
+sudo systemctl enable --now sboxserverconsole
+sudo journalctl -u sboxserverconsole -f
+```
+
+The unit ships with `KillMode=mixed` so the systemd cgroup reaps any orphaned `sbox-server` children if SboxServerConsole itself is killed hard (SIGKILL). Recommended for production deployments.
+
+---
+
+### Configuration reference
+
+Everything passable as a `--flag` on the command line is also a kebab-case key in the config file. CLI flags override config-file values. Run `SboxServerConsole --help` for the full list, or read [`examples/config.example.json`](examples/config.example.json) (Windows) and [`examples/config.linux.example.json`](examples/config.linux.example.json) (Linux) for fully populated examples.
+
+---
+
 ## Trust & First-Run Warning
 
-**The release binary is not Authenticode-signed.** S&box Server Console is shipped as an unsigned single-file `SboxServerConsole.exe`. Code-signing certificates are recurring annual costs that don't fit a free open-source tool, so the binary you download has no embedded signature. This is normal for community Windows tooling but it means you'll see one or both of the following on first run:
+**The Windows release binary is not Authenticode-signed.** S&box Server Console is shipped as an unsigned single-file `SboxServerConsole.exe` on Windows. Code-signing certificates are recurring annual costs that don't fit a free open-source tool, so the binary you download has no embedded signature. This is normal for community Windows tooling but it means you'll see one or both of the following on first run:
 
 1. **Microsoft SmartScreen**: "Windows protected your PC". Click *More info* → *Run anyway*. SmartScreen filters new unsigned binaries by reputation; once enough machines run a given build it stops warning, but every fresh release starts at zero reputation.
 2. **Mark-of-the-Web zone block**: if you downloaded the zip in a browser, Windows tags the extracted files as "from the internet". Right-click `SboxServerConsole.exe` → *Properties* → check *Unblock* → *OK*. Or run from PowerShell: `Unblock-File .\SboxServerConsole.exe`.
 3. **Antivirus heuristic flags**: occasionally an AV vendor flags an unsigned single-file .NET self-contained publish as suspicious. The full source builds locally with `dotnet publish` (see [Build](#build)) and reproduces byte-for-byte from a tagged release commit, so you can verify rather than trust.
 
-If your environment policy forbids running unsigned binaries, you can build from source — the same code, your own signing chain.
+The Linux release tarball ships an unsigned ELF binary. SHA-256 sums for each release artifact are visible on the GitHub Release page and reproducible from a tagged source commit via `dotnet publish -r linux-x64 --self-contained -p:PublishSingleFile=true`.
+
+If your environment policy forbids running unsigned binaries, you can build from source on either platform — the same code, your own signing chain.
 
 ---
 
@@ -330,12 +392,19 @@ The default bind is `127.0.0.1`. Only the local machine can reach the agent. To 
 Local (.NET 8 SDK required):
 
 ```bash
+# Windows binary
 dotnet publish src/SboxServerConsole.csproj -c Release -r win-x64 \
-  --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -o publish
-# Output: publish/SboxServerConsole.exe
+  --self-contained -p:PublishSingleFile=true -o publish/win-x64
+
+# Linux binary
+dotnet publish src/SboxServerConsole.csproj -c Release -r linux-x64 \
+  --self-contained -p:PublishSingleFile=true -o publish/linux-x64
+chmod +x publish/linux-x64/SboxServerConsole
 ```
 
-Tagged releases (`vX.Y.Z`) are built by the GitHub Actions workflow at `.github/workflows/release.yml` and attached to the GitHub Release as `SboxServerConsole.exe` and `SboxServerConsole.zip`.
+Both publishes work cross-platform: a Linux dev box can produce the Windows binary, and vice versa. .NET 8 SDK is the only prerequisite.
+
+Tagged releases (`vX.Y.Z`) are built by the GitHub Actions workflow at `.github/workflows/release.yml` and attached to the GitHub Release as `SboxServerConsole.exe`, `SboxServerConsole-win-x64.zip`, the bare Linux ELF, and `SboxServerConsole-linux-x64.tar.gz`.
 
 Full HTTP request/response shapes and status codes are in [`docs/api.md`](docs/api.md).
 

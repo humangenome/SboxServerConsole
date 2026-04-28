@@ -2,7 +2,11 @@ namespace SboxServerConsole;
 
 // Abstraction over OS-specific kill-children-when-parent-dies primitives.
 // Windows: Job Object with KILL_ON_JOB_CLOSE.
-// Posix (TODO): setpgid(0,0) + killpg(SIGKILL), or systemd cgroup attach.
+// Linux/macOS: Process.Kill(entireProcessTree:true) at dispose time.
+//   Note: this is best-effort — if the parent dies hard (SIGKILL) without
+//   running Dispose, the child is reparented to init and survives. Hosts
+//   that need true tree death on parent crash should run SboxServerConsole
+//   under systemd with KillMode=mixed (see scripts/sboxserverconsole.service).
 public interface IProcessGroup : IDisposable
 {
     void AssignProcess(System.Diagnostics.Process p);
@@ -10,13 +14,12 @@ public interface IProcessGroup : IDisposable
 
 public static class ProcessGroup
 {
-    // Returns a platform-specific implementation, or null if the current OS has no impl.
-    // Callers decide whether absence is fatal — on Windows it must be, on Posix today
-    // we degrade to best-effort cleanup until sbox ships official Linux server binaries.
+    // Returns a platform-specific implementation, or null if the current OS
+    // has no impl. Callers decide whether absence is fatal.
     public static IProcessGroup? CreateForCurrentPlatform()
     {
         if (OperatingSystem.IsWindows()) return new WindowsProcessGroup();
-        // TODO: PosixProcessGroup
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) return new PosixProcessGroup();
         return null;
     }
 }

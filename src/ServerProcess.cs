@@ -22,7 +22,7 @@ public sealed class ServerProcess : IDisposable
     readonly object _lifecycleLock = new();
     readonly object _stdinLock = new();
 
-    PseudoConsoleHost? _pty;
+    IServerHost? _host;
     IProcessGroup? _group;
     Thread? _outputPump;
     Thread? _exitWatcher;
@@ -55,7 +55,7 @@ public sealed class ServerProcess : IDisposable
     {
         get
         {
-            lock (_lifecycleLock) return (int)(_pty?.ChildProcessId ?? 0);
+            lock (_lifecycleLock) return (int)(_host?.ChildProcessId ?? 0);
         }
     }
 
@@ -63,7 +63,7 @@ public sealed class ServerProcess : IDisposable
     {
         get
         {
-            lock (_lifecycleLock) return _pty is not null && !_pty.HasChildExited();
+            lock (_lifecycleLock) return _host is not null && !_host.HasChildExited();
         }
     }
 
@@ -71,7 +71,7 @@ public sealed class ServerProcess : IDisposable
     {
         get
         {
-            lock (_lifecycleLock) return _pty is null ? TimeSpan.Zero : DateTime.UtcNow - _childStartedAt;
+            lock (_lifecycleLock) return _host is null ? TimeSpan.Zero : DateTime.UtcNow - _childStartedAt;
         }
     }
 
@@ -91,7 +91,7 @@ public sealed class ServerProcess : IDisposable
     {
         lock (_lifecycleLock)
         {
-            if (_pty is not null && !_pty.HasChildExited()) return false;
+            if (_host is not null && !_host.HasChildExited()) return false;
         }
         StartChild(initial: false);
         return true;
@@ -99,39 +99,58 @@ public sealed class ServerProcess : IDisposable
 
     void StartChild(bool initial)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("ConPTY launch is Windows-only");
-
         lock (_lifecycleLock)
         {
             DisposeChildLocked();
             _userRequestedStop = false;
             _childCts = new CancellationTokenSource();
 
-            _pty = new PseudoConsoleHost();
-            // Wrap actual server in PowerShell so it gets a real Windows console
-            // (sbox-server.exe doesn't bind directly to a ConPTY host).
-            var psExe = $@"{Environment.GetFolderPath(Environment.SpecialFolder.System)}\WindowsPowerShell\v1.0\powershell.exe";
-            if (!File.Exists(psExe)) psExe = "powershell.exe";
-            var psCmd = $"& \"{_cfg.ChildExe}\" {_cfg.ChildArgs}";
-            // Pass the script via -EncodedCommand (UTF-16 LE base64) so PowerShell
-            // never has to parse it through CreateProcess argv quoting. Any byte —
-            // including & ( ) ; | $ ` and embedded double quotes from --child-args
-            // values like +hostname "Foo & Bar" — survives verbatim.
-            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(psCmd));
-            var wrappedArgs = $"-NoProfile -NoLogo -EncodedCommand {encoded}";
-            _pty.Start(psExe, wrappedArgs, _cfg.GameDir);
+            string spawnExe;
+            string spawnArgs;
+            string wrapperLabel;
+
+            if (OperatingSystem.IsWindows())
+            {
+                _host = new PseudoConsoleHost();
+                // Wrap actual server in PowerShell so it gets a real Windows console
+                // (sbox-server.exe doesn't bind directly to a ConPTY host).
+                var psExe = $@"{Environment.GetFolderPath(Environment.SpecialFolder.System)}\WindowsPowerShell\v1.0\powershell.exe";
+                if (!File.Exists(psExe)) psExe = "powershell.exe";
+                var psCmd = $"& \"{_cfg.ChildExe}\" {_cfg.ChildArgs}";
+                // Pass the script via -EncodedCommand (UTF-16 LE base64) so PowerShell
+                // never has to parse it through CreateProcess argv quoting. Any byte —
+                // including & ( ) ; | $ ` and embedded double quotes from --child-args
+                // values like +hostname "Foo & Bar" — survives verbatim.
+                var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(psCmd));
+                spawnExe = psExe;
+                spawnArgs = $"-NoProfile -NoLogo -EncodedCommand {encoded}";
+                wrapperLabel = "powershell";
+            }
+            else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+            {
+                _host = new LinuxServerHost();
+                spawnExe = _cfg.ChildExe;
+                spawnArgs = _cfg.ChildArgs;
+                wrapperLabel = "sh";
+            }
+            else
+            {
+                throw new PlatformNotSupportedException(
+                    $"unsupported platform; only Windows, Linux, and macOS are wired today");
+            }
+
+            _host.Start(spawnExe, spawnArgs, _cfg.GameDir);
             _childStartedAt = DateTime.UtcNow;
             _buffer.Append("system", initial
-                ? $"shell wrapper (powershell) started pid={_pty.ChildProcessId}"
-                : $"child restarted pid={_pty.ChildProcessId}");
+                ? $"shell wrapper ({wrapperLabel}) started pid={_host.ChildProcessId}"
+                : $"child restarted pid={_host.ChildProcessId}");
 
             try
             {
                 _group = ProcessGroup.CreateForCurrentPlatform();
                 if (_group is not null)
                 {
-                    using var p = System.Diagnostics.Process.GetProcessById((int)_pty.ChildProcessId);
+                    using var p = System.Diagnostics.Process.GetProcessById((int)_host.ChildProcessId);
                     _group.AssignProcess(p);
                 }
             }
@@ -140,10 +159,10 @@ public sealed class ServerProcess : IDisposable
                 _buffer.Append("system", $"warn: process group attach failed: {ex.Message}");
             }
 
-            _outputPump = new Thread(PumpOutput) { IsBackground = true, Name = "pty-output" };
+            _outputPump = new Thread(PumpOutput) { IsBackground = true, Name = "child-output" };
             _outputPump.Start();
 
-            _exitWatcher = new Thread(WatchExit) { IsBackground = true, Name = "pty-exit" };
+            _exitWatcher = new Thread(WatchExit) { IsBackground = true, Name = "child-exit" };
             _exitWatcher.Start();
         }
     }
@@ -152,10 +171,10 @@ public sealed class ServerProcess : IDisposable
     {
         try { _childCts.Cancel(); } catch { }
         try { _group?.Dispose(); } catch { }
-        try { _pty?.Dispose(); } catch { }
+        try { _host?.Dispose(); } catch { }
         try { _outputPump?.Join(2000); } catch { }
         try { _exitWatcher?.Join(2000); } catch { }
-        _pty = null;
+        _host = null;
         _group = null;
         _outputPump = null;
         _exitWatcher = null;
@@ -163,9 +182,9 @@ public sealed class ServerProcess : IDisposable
 
     void PumpOutput()
     {
-        var pty = _pty;
-        if (pty is null) return;
-        var stream = pty.OutputStream;
+        var host = _host;
+        if (host is null) return;
+        var stream = host.OutputStream;
         var buf = new byte[4096];
         var line = new StringBuilder();
         try
@@ -225,15 +244,15 @@ public sealed class ServerProcess : IDisposable
 
     void WatchExit()
     {
-        var pty = _pty;
-        if (pty is null) return;
+        var host = _host;
+        if (host is null) return;
         try
         {
-            while (!_childCts.IsCancellationRequested && !pty.HasChildExited()) Thread.Sleep(500);
+            while (!_childCts.IsCancellationRequested && !host.HasChildExited()) Thread.Sleep(500);
         }
         catch { }
         int code;
-        try { code = pty.ChildExitCode(); } catch { code = -1; }
+        try { code = host.ChildExitCode(); } catch { code = -1; }
         bool userStopped;
         bool autoRestart = _cfg.AutoRestart;
         lock (_lifecycleLock)
@@ -283,52 +302,55 @@ public sealed class ServerProcess : IDisposable
 
     public bool TrySendCommand(string cmd)
     {
-        PseudoConsoleHost? pty;
-        lock (_lifecycleLock) pty = _pty;
-        if (pty is null) return false;
-        if (pty.HasChildExited()) return false;
+        IServerHost? host;
+        lock (_lifecycleLock) host = _host;
+        if (host is null) return false;
+        if (host.HasChildExited()) return false;
         try
         {
             lock (_stdinLock)
             {
+                // \r\n works on both Windows ConPTY (which expects CRLF as a line
+                // terminator from the host side) and Linux pipes (which strip the
+                // \r when sbox-server reads via Console.ReadLine).
                 var bytes = Encoding.UTF8.GetBytes(cmd + "\r\n");
-                pty.InputStream.Write(bytes, 0, bytes.Length);
-                pty.InputStream.Flush();
+                host.InputStream.Write(bytes, 0, bytes.Length);
+                host.InputStream.Flush();
             }
             _buffer.Append("input", cmd);
             return true;
         }
         catch (Exception ex)
         {
-            _buffer.Append("system", $"pty input write failed: {ex.Message}");
+            _buffer.Append("system", $"stdin write failed: {ex.Message}");
             return false;
         }
     }
 
     public void Stop(TimeSpan timeout)
     {
-        PseudoConsoleHost? pty;
+        IServerHost? host;
         lock (_lifecycleLock)
         {
             _userRequestedStop = true;
-            pty = _pty;
+            host = _host;
         }
-        if (pty is null || pty.HasChildExited()) return;
+        if (host is null || host.HasChildExited()) return;
         try
         {
             TrySendCommand(_cfg.ShutdownCommand);
             var deadline = DateTime.UtcNow + timeout;
-            while (DateTime.UtcNow < deadline && !pty.HasChildExited()) Thread.Sleep(200);
-            if (!pty.HasChildExited()) _buffer.Append("system", "graceful shutdown timed out, ClosePseudoConsole will kill child");
+            while (DateTime.UtcNow < deadline && !host.HasChildExited()) Thread.Sleep(200);
+            if (!host.HasChildExited()) _buffer.Append("system", "graceful shutdown timed out, host dispose will kill child");
         }
         catch (Exception ex) { _buffer.Append("system", $"stop failed: {ex.Message}"); }
     }
 
     public bool Restart(TimeSpan stopTimeout)
     {
-        PseudoConsoleHost? pty;
-        lock (_lifecycleLock) pty = _pty;
-        if (pty is not null && !pty.HasChildExited())
+        IServerHost? host;
+        lock (_lifecycleLock) host = _host;
+        if (host is not null && !host.HasChildExited())
         {
             // Send graceful shutdown without flagging as user-requested stop —
             // we want the auto-restart machinery to fire.
@@ -336,15 +358,15 @@ public sealed class ServerProcess : IDisposable
             {
                 TrySendCommand(_cfg.ShutdownCommand);
                 var deadline = DateTime.UtcNow + stopTimeout;
-                while (DateTime.UtcNow < deadline && !pty.HasChildExited()) Thread.Sleep(200);
+                while (DateTime.UtcNow < deadline && !host.HasChildExited()) Thread.Sleep(200);
             }
             catch { }
-            // If still alive, dispose the pty (kills it).
+            // If still alive, dispose the host (kills it).
             lock (_lifecycleLock)
             {
-                if (_pty is not null && !_pty.HasChildExited())
+                if (_host is not null && !_host.HasChildExited())
                 {
-                    try { _pty.Dispose(); } catch { }
+                    try { _host.Dispose(); } catch { }
                 }
             }
             // WatchExit thread will handle the auto-restart when it sees the exit.

@@ -13,7 +13,7 @@ namespace SboxServerConsole;
 // without a console attached. PTY-backed launch is the only mode that works
 // (verified: timmybo5/sbox-server-manager uses node-pty for the same reason).
 [SupportedOSPlatform("windows")]
-public sealed class PseudoConsoleHost : IDisposable
+public sealed class PseudoConsoleHost : IServerHost
 {
     public IntPtr ChildProcessHandle { get; private set; } = IntPtr.Zero;
     public uint ChildProcessId { get; private set; }
@@ -28,14 +28,17 @@ public sealed class PseudoConsoleHost : IDisposable
     IntPtr _attrList = IntPtr.Zero;
     bool _disposed;
 
-    public void Start(string exe, string args, string workingDir, short cols = 200, short rows = 50)
+    public void Start(string exe, string args, string workingDir)
     {
         if (!CreatePipe(out _hPipeOutRead, out _hPipeOutWrite, IntPtr.Zero, 0))
             throw new InvalidOperationException($"CreatePipe(out) failed err={Marshal.GetLastWin32Error()}");
         if (!CreatePipe(out _hPipeInRead,  out _hPipeInWrite,  IntPtr.Zero, 0))
             throw new InvalidOperationException($"CreatePipe(in) failed err={Marshal.GetLastWin32Error()}");
 
-        var size = new COORD { X = cols, Y = rows };
+        // ConPTY needs a viewport size; 200x50 is large enough that sbox status
+        // padding doesn't wrap mid-line, which makes the line-based output pump
+        // simpler than dealing with wrap-around column counters.
+        var size = new COORD { X = 200, Y = 50 };
         int hr = CreatePseudoConsole(size, _hPipeInRead, _hPipeOutWrite, 0, out _hPC);
         if (hr != 0) throw new InvalidOperationException($"CreatePseudoConsole hr=0x{hr:x8}");
 

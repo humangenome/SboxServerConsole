@@ -1,0 +1,39 @@
+# Example systemd unit for SboxServerConsole on Linux.
+#
+# Install:
+#   sudo cp examples/sboxserverconsole.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sboxserverconsole
+#
+# Edit User=, ExecStart=, and WorkingDirectory= to match your install before
+# enabling the unit. KillMode=mixed ensures systemd reaps any orphaned
+# sbox-server children if the wrapper itself is killed hard (SIGKILL).
+[Unit]
+Description=S&box Server Console (process agent for sbox-server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sbox
+Group=sbox
+WorkingDirectory=/opt/sbox-server
+ExecStart=/opt/sbox-server/SboxServerConsole --config-file /opt/sbox-server/sboxconsole.json
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+
+# Recommended hardening — relax if your install path needs it.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sbox-server
+
+[Install]
+WantedBy=multi-user.target

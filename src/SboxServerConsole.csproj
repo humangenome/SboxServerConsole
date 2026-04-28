@@ -9,16 +9,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>1.0.3</Version>
+    <Version>1.1.0</Version>
     <Authors>HumanGenome</Authors>
-    <Description>Process agent for the s&amp;box dedicated server. Source RCON TCP listener, HTTP+SSE console, A2S player tracking, banlist enforcement, scheduled commands, lifecycle control, auto-restart, audit log, Discord notifications, web dashboard.</Description>
+    <Description>Cross-platform process agent for the s&amp;box dedicated server. Source RCON TCP listener, HTTP+SSE console, A2S player tracking, banlist enforcement, scheduled commands, lifecycle control, auto-restart, audit log, Discord notifications, web dashboard. Windows + Linux.</Description>
     <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

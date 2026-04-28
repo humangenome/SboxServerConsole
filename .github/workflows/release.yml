@@ -14,72 +14,107 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # Build both win-x64 and linux-x64 from a single Linux runner. .NET's
+    # cross-target publish handles the win-x64 single-file binary cleanly
+    # without needing a Windows runner.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "8.0.x"
 
-      - name: Publish single-file Windows binary
+      - name: Publish win-x64 single-file binary
         run: |
-          dotnet publish src/SboxServerConsole.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -o publish
+          dotnet publish src/SboxServerConsole.csproj \
+            -c Release -r win-x64 --self-contained \
+            -p:PublishSingleFile=true -p:PublishTrimmed=false \
+            -o publish/win-x64
 
-      - name: Stage release zip
-        shell: pwsh
+      - name: Publish linux-x64 single-file binary
         run: |
-          $stage = "stage"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item publish/SboxServerConsole.exe $stage/
-          Copy-Item README.md $stage/
-          Copy-Item LICENSE $stage/ -ErrorAction SilentlyContinue
-          Compress-Archive -Path "$stage/*" -DestinationPath SboxServerConsole.zip -Force
+          dotnet publish src/SboxServerConsole.csproj \
+            -c Release -r linux-x64 --self-contained \
+            -p:PublishSingleFile=true -p:PublishTrimmed=false \
+            -o publish/linux-x64
+          chmod +x publish/linux-x64/SboxServerConsole
+
+      - name: Stage release archives
+        run: |
+          set -euo pipefail
+          mkdir -p stage
+
+          # Windows zip: SboxServerConsole.exe + README/LICENSE + service installer scripts
+          cp publish/win-x64/SboxServerConsole.exe stage/
+          cp README.md LICENSE stage/
+          cp -r scripts stage/scripts
+          cp -r examples stage/examples
+          (cd stage && zip -r ../SboxServerConsole-win-x64.zip .)
+          rm -rf stage/* stage/.[!.]* 2>/dev/null || true
+
+          # Linux tar.gz: SboxServerConsole + README/LICENSE + systemd unit example
+          cp publish/linux-x64/SboxServerConsole stage/
+          chmod +x stage/SboxServerConsole
+          cp README.md LICENSE stage/
+          cp -r examples stage/examples
+          tar -czf SboxServerConsole-linux-x64.tar.gz -C stage .
 
       - uses: actions/upload-artifact@v4
         with:
           name: SboxServerConsole
           path: |
-            publish/SboxServerConsole.exe
-            SboxServerConsole.zip
+            publish/win-x64/SboxServerConsole.exe
+            publish/linux-x64/SboxServerConsole
+            SboxServerConsole-win-x64.zip
+            SboxServerConsole-linux-x64.tar.gz
 
       - name: Extract release notes from CHANGELOG
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
+        shell: bash
         run: |
-          $tag = "${{ github.ref_name }}".TrimStart('v')
-          $changelog = Get-Content CHANGELOG.md
-          $section = @()
-          $capture = $false
-          foreach ($line in $changelog) {
-            if ($line -match "^## \[$([regex]::Escape($tag))\]") { $capture = $true; continue }
-            if ($capture -and $line -match "^## \[") { break }
-            if ($capture) { $section += $line }
-          }
-          if ($section.Count -eq 0) {
-            Write-Error "No CHANGELOG section found for v$tag"
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          awk -v t="$tag" '
+            /^## \[/ {
+              if (capture) exit
+              if ($0 ~ "^## \\[" t "\\]") { capture = 1; next }
+            }
+            capture { print }
+          ' CHANGELOG.md > release_section.md
+
+          if [ ! -s release_section.md ]; then
+            echo "No CHANGELOG section found for v$tag" >&2
             exit 1
-          }
-          $utmTag = $tag -replace '\.', '_'
-          $notes = @()
-          $notes += "Bug fix and improvement release."
-          $notes += ""
-          $notes += $section
-          $notes += ""
-          $notes += "## Install / Upgrade"
-          $notes += ""
-          $notes += "Download ``SboxServerConsole.exe`` (or ``SboxServerConsole.zip``) and drop it next to your s&box dedicated server. Launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#getting-started). Reinstalling is safe — bans, scheduler jobs, and audit logs persist across restarts."
-          $notes += ""
-          $notes += "## Official Hosting"
-          $notes += ""
-          $notes += "Don't want to run your own server? [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=release&utm_campaign=sbox_console_v$utmTag) offers s&box dedicated servers with SboxServerConsole pre-installed and panel-integrated."
-          $notes -join "`n" | Set-Content -Path release_notes.md -Encoding utf8
+          fi
+
+          utm_tag="${tag//./_}"
+          {
+            echo "## What's in this release"
+            echo
+            cat release_section.md
+            echo
+            echo "## Download"
+            echo
+            echo "- Windows (x64): \`SboxServerConsole.exe\` (single file) or \`SboxServerConsole-win-x64.zip\` (binary + scripts + examples)"
+            echo "- Linux (x64): \`SboxServerConsole-linux-x64.tar.gz\` (binary + examples + systemd unit)"
+            echo
+            echo "## Install / Upgrade"
+            echo
+            echo "Drop the binary next to your s&box dedicated server install and launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#installation). Reinstalling is safe — bans, scheduler jobs, and audit logs persist across restarts."
+            echo
+            echo "## Official Hosting"
+            echo
+            echo "Don't want to run your own server? [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=release&utm_campaign=sbox_console_v$utm_tag) offers s&box dedicated servers with SboxServerConsole pre-installed and panel-integrated."
+          } > release_notes.md
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            publish/SboxServerConsole.exe
-            SboxServerConsole.zip
+            publish/win-x64/SboxServerConsole.exe
+            publish/linux-x64/SboxServerConsole
+            SboxServerConsole-win-x64.zip
+            SboxServerConsole-linux-x64.tar.gz
           body_path: release_notes.md

@@ -19,7 +19,14 @@ Keep code style consistent with what's already there. C# uses 4-space indent, fi
 
 ```
 dotnet build src/SboxServerConsole.csproj -c Release
-dotnet publish src/SboxServerConsole.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -o publish
+
+# Windows binary
+dotnet publish src/SboxServerConsole.csproj -c Release -r win-x64 \
+  --self-contained -p:PublishSingleFile=true -o publish/win-x64
+
+# Linux binary
+dotnet publish src/SboxServerConsole.csproj -c Release -r linux-x64 \
+  --self-contained -p:PublishSingleFile=true -o publish/linux-x64
 ```
 
-The release pipeline runs the same `dotnet publish` on Windows runners and ships the resulting single-file binary as a GitHub release asset.
+Both publishes work cross-platform: a Linux dev box can produce the Windows binary, and vice versa. The release pipeline runs both publishes on a Linux runner and ships the resulting single-file binaries plus zip/tarball bundles as GitHub release assets.

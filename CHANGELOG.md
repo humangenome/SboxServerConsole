@@ -4,6 +4,26 @@ All notable changes to S&box Server Console are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-28
+
+### Added
+
+- **Linux (x64) support.** SboxServerConsole now builds, ships, and runs natively on Linux alongside Windows. New `LinuxServerHost` spawns the child server through `/bin/sh -c 'exec <exe> <args> 2>&1'` so stderr folds into stdout and customer `--child-args` quoting (`+hostname "My Server"`) keeps its existing semantics. New `PosixProcessGroup` uses `Process.Kill(entireProcessTree:true)` for tree shutdown on graceful Dispose.
+- **Linux release artifacts.** Release pipeline now publishes both `win-x64` and `linux-x64` single-file self-contained binaries from one Ubuntu runner. New downloads on every tag: `SboxServerConsole` (bare Linux ELF), `SboxServerConsole-linux-x64.tar.gz` (binary + examples + systemd unit), `SboxServerConsole-win-x64.zip` (binary + scripts + examples), `SboxServerConsole.exe` (single Windows file).
+- **systemd unit example** at [`examples/sboxserverconsole.service`](examples/sboxserverconsole.service). Ships with `KillMode=mixed` so the cgroup reaps any orphaned `sbox-server` children if SboxServerConsole itself is killed hard. Recommended for production Linux deployments.
+- **Linux config example** at [`examples/config.linux.example.json`](examples/config.linux.example.json) with FHS-conformant paths (`/opt`, `/var/log`, `/var/lib`).
+
+### Changed
+
+- **`PseudoConsoleHost` now implements the new `IServerHost` interface** alongside `LinuxServerHost`. `ServerProcess` dispatches to the right host at runtime via `OperatingSystem.IsWindows()` instead of throwing `PlatformNotSupportedException`.
+- **`csproj` no longer hardcodes `win-x64`.** The runtime identifier is supplied at publish time (`-r win-x64` or `-r linux-x64`), making cross-target builds the default rather than the exception.
+- **README install section split into Windows and Linux subsections** with platform-appropriate paths, run commands, and service-installer instructions (sc.exe on Windows, systemd on Linux).
+
+### Notes
+
+- Linux child supervision uses pipe-redirected stdin (no PTY). The Facepunch dedicated server on Linux is a regular .NET console app that reads from `Console.ReadLine`, so plain pipes work — no node-pty or libc PTY P/Invoke needed. If a future sbox build ever refuses pipe stdin on Linux the same way the Windows build refuses non-ConPTY input, file an issue and we'll add a Linux PTY backend.
+- macOS is not officially supported but the code paths compile and run there if you build from source. No release artifact is published for macOS.
+
 ## [1.0.3] - 2026-04-27
 
 ### Added
