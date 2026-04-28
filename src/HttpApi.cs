@@ -12,7 +12,8 @@ public sealed class HttpApi : IDisposable
     const int MaxBodyBytes = 4 * 1024;
     const int MaxConcurrentStreams = 16;
     const int StreamChannelCapacity = 256;
-    const int ExecuteCollectMs = 250;
+    const int ExecuteCollectMsDefault = 250;
+    const int ExecuteCollectMsMax = 10000;
     static readonly TimeSpan StreamHeartbeatInterval = TimeSpan.FromSeconds(15);
 
     readonly CliConfig _cfg;
@@ -228,6 +229,13 @@ public sealed class HttpApi : IDisposable
 
         bool collect = ctx.Request.QueryString["collect"] is { } cv
             && (cv == "1" || cv.Equals("true", StringComparison.OrdinalIgnoreCase));
+        // Optional ?wait_ms=N override for the collect window (default 250ms, clamped to 50..10000).
+        // Needed for verbose dumps like cvarlist that don't fit in 250ms on busy hosts.
+        int waitMs = ExecuteCollectMsDefault;
+        if (ctx.Request.QueryString["wait_ms"] is { } wv && int.TryParse(wv, out var wParsed))
+        {
+            waitMs = Math.Clamp(wParsed, 50, ExecuteCollectMsMax);
+        }
         long preSeq = _buffer.LastSeq;
 
         bool ok = _server.TrySendCommand(cmd);
@@ -249,7 +257,7 @@ public sealed class HttpApi : IDisposable
             Write(ctx, 200, "application/json", "{\"ok\":true}");
             return;
         }
-        Thread.Sleep(ExecuteCollectMs);
+        Thread.Sleep(waitMs);
         var collected = _buffer.SinceSeq(preSeq);
         var sb2 = new StringBuilder("{\"ok\":true,\"output\":[");
         for (int i = 0; i < collected.Count; i++)
