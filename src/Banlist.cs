@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace SboxServerConsole;
@@ -12,10 +13,15 @@ public sealed class Banlist : IDisposable
 {
     public sealed class Ban
     {
-        public string SteamId { get; set; } = "";
-        public string Reason { get; set; } = "";
-        public string AddedAt { get; set; } = "";
-        public string AddedBy { get; set; } = "";
+        [JsonPropertyName("steamid")]   public string SteamId { get; set; } = "";
+        [JsonPropertyName("reason")]    public string Reason { get; set; } = "";
+        [JsonPropertyName("added_at")]  public string AddedAt { get; set; } = "";
+        [JsonPropertyName("added_by")]  public string AddedBy { get; set; } = "";
+    }
+
+    sealed class BanlistFile
+    {
+        [JsonPropertyName("bans")] public List<Ban> Bans { get; set; } = new();
     }
 
     public sealed record Player(string SteamId, string Name, DateTime SeenAt);
@@ -217,7 +223,7 @@ public sealed class Banlist : IDisposable
         var dir = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var opts = new JsonSerializerOptions { WriteIndented = true };
-        var data = new { bans = _bans.Values.OrderBy(b => b.AddedAt).ToList() };
+        var data = new BanlistFile { Bans = _bans.Values.OrderBy(b => b.AddedAt).ToList() };
         var tmp = _path + ".tmp";
         try
         {

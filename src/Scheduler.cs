@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Cronos;
 
 namespace SboxServerConsole;
@@ -12,13 +13,18 @@ public sealed class Scheduler : IDisposable
 {
     public sealed class Job
     {
-        public string Id { get; set; } = "";
-        public string Schedule { get; set; } = "";
-        public string Command { get; set; } = "";
-        public bool Enabled { get; set; } = true;
-        public string CreatedAt { get; set; } = "";
-        public string? LastRunAt { get; set; }
-        public long RunCount { get; set; }
+        [JsonPropertyName("id")]           public string Id { get; set; } = "";
+        [JsonPropertyName("schedule")]     public string Schedule { get; set; } = "";
+        [JsonPropertyName("command")]      public string Command { get; set; } = "";
+        [JsonPropertyName("enabled")]      public bool Enabled { get; set; } = true;
+        [JsonPropertyName("created_at")]   public string CreatedAt { get; set; } = "";
+        [JsonPropertyName("last_run_at")]  public string? LastRunAt { get; set; }
+        [JsonPropertyName("run_count")]    public long RunCount { get; set; }
+    }
+
+    sealed class SchedulerFile
+    {
+        [JsonPropertyName("jobs")] public List<Job> Jobs { get; set; } = new();
     }
 
     readonly string? _path;
@@ -255,7 +261,7 @@ public sealed class Scheduler : IDisposable
         var dir = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var opts = new JsonSerializerOptions { WriteIndented = true };
-        var data = new { jobs = _jobs.Values.OrderBy(j => j.Id).ToList() };
+        var data = new SchedulerFile { Jobs = _jobs.Values.OrderBy(j => j.Id).ToList() };
         var tmp = _path + ".tmp";
         try
         {
