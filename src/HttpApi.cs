@@ -22,6 +22,7 @@ public sealed class HttpApi : IDisposable
     readonly MessageBuffer _buffer;
     readonly AuditLog _audit;
     readonly Banlist _banlist;
+    readonly Allowlist _allowlist;
     readonly Scheduler _scheduler;
     readonly A2SQuery _a2s;
     readonly LogsBrowser _logs;
@@ -35,13 +36,14 @@ public sealed class HttpApi : IDisposable
     long _streamClientsActive;
     Thread? _thread;
 
-    public HttpApi(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit, Banlist banlist, Scheduler scheduler, A2SQuery a2s, LogsBrowser logs)
+    public HttpApi(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit, Banlist banlist, Allowlist allowlist, Scheduler scheduler, A2SQuery a2s, LogsBrowser logs)
     {
         _cfg = cfg;
         _server = server;
         _buffer = buffer;
         _audit = audit;
         _banlist = banlist;
+        _allowlist = allowlist;
         _scheduler = scheduler;
         _a2s = a2s;
         _logs = logs;
@@ -123,6 +125,8 @@ public sealed class HttpApi : IDisposable
         if (path == "/players") { RequireAuth(ctx, () => Players(ctx)); return; }
         if (path == "/bans") { RequireAuth(ctx, () => Bans(ctx)); return; }
         if (path.StartsWith("/bans/", StringComparison.Ordinal)) { RequireAuth(ctx, () => BanOne(ctx, path[6..])); return; }
+        if (path == "/allows") { RequireAuth(ctx, () => Allows(ctx)); return; }
+        if (path.StartsWith("/allows/", StringComparison.Ordinal)) { RequireAuth(ctx, () => AllowOne(ctx, path[8..])); return; }
         if (path == "/scheduler") { RequireAuth(ctx, () => SchedulerList(ctx)); return; }
         if (path.StartsWith("/scheduler/", StringComparison.Ordinal)) { RequireAuth(ctx, () => SchedulerItem(ctx, path[11..])); return; }
         if (path == "/server/start") { RequireAuth(ctx, () => ServerStart(ctx)); return; }
@@ -576,6 +580,62 @@ public sealed class HttpApi : IDisposable
         steamid = WebUtility.UrlDecode(steamid);
         if (ctx.Request.HttpMethod != "DELETE") { Write(ctx, 405, "application/json", "{\"error\":\"DELETE\"}"); return; }
         if (!_banlist.Remove(steamid)) { Write(ctx, 404, "application/json", "{\"error\":\"not found\"}"); return; }
+        Write(ctx, 200, "application/json", "{\"ok\":true}");
+    }
+
+    void Allows(HttpListenerContext ctx)
+    {
+        switch (ctx.Request.HttpMethod)
+        {
+            case "GET":
+                {
+                    var list = _allowlist.All();
+                    var sb = new StringBuilder("{\"enforced\":");
+                    sb.Append(_allowlist.Enforced ? "true" : "false");
+                    sb.Append(",\"allow\":[");
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (i > 0) sb.Append(',');
+                        var a = list[i];
+                        sb.Append("{\"steamid\":").Append(JsonEncodedString(a.SteamId))
+                          .Append(",\"note\":").Append(JsonEncodedString(a.Note))
+                          .Append(",\"added_at\":").Append(JsonEncodedString(a.AddedAt))
+                          .Append(",\"added_by\":").Append(JsonEncodedString(a.AddedBy))
+                          .Append('}');
+                    }
+                    sb.Append("]}");
+                    Write(ctx, 200, "application/json", sb.ToString());
+                    return;
+                }
+            case "POST":
+                {
+                    var body = ReadBody(ctx);
+                    if (body is null) return;
+                    string? sid; string? note;
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(body);
+                        sid = doc.RootElement.TryGetProperty("steamid", out var s) ? s.GetString() : null;
+                        note = doc.RootElement.TryGetProperty("note", out var n) ? n.GetString() : "";
+                    }
+                    catch (JsonException) { Write(ctx, 400, "application/json", "{\"error\":\"invalid json\"}"); return; }
+                    if (string.IsNullOrWhiteSpace(sid)) { Write(ctx, 400, "application/json", "{\"error\":\"steamid required\"}"); return; }
+                    var by = ctx.Request.RemoteEndPoint?.Address.ToString() ?? "";
+                    _allowlist.Add(sid!, note ?? "", by);
+                    Write(ctx, 200, "application/json", "{\"ok\":true}");
+                    return;
+                }
+            default:
+                Write(ctx, 405, "application/json", "{\"error\":\"GET or POST\"}");
+                return;
+        }
+    }
+
+    void AllowOne(HttpListenerContext ctx, string steamid)
+    {
+        steamid = WebUtility.UrlDecode(steamid);
+        if (ctx.Request.HttpMethod != "DELETE") { Write(ctx, 405, "application/json", "{\"error\":\"DELETE\"}"); return; }
+        if (!_allowlist.Remove(steamid)) { Write(ctx, 404, "application/json", "{\"error\":\"not found\"}"); return; }
         Write(ctx, 200, "application/json", "{\"ok\":true}");
     }
 

@@ -14,6 +14,7 @@
   "audit-log":             "/var/log/sboxconsole/audit.jsonl",
   "discord-webhook":       "",
   "banlist":               "/var/lib/sboxconsole/banlist.json",
+  "allowlist":             "/var/lib/sboxconsole/allowlist.json",
   "kick-command":          "kick {steamid}",
   "connect-regex":         "",
   "disconnect-regex":      "",

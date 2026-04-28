@@ -4,6 +4,14 @@ All notable changes to S&box Server Console are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-04-28
+
+### Added
+
+- **Allowlist (whitelist) enforcement.** New `--allowlist <path>` flag persists a JSON list of permitted SteamID64 entries to `.allowlist.json`. When the list is **non-empty**, any connecting steamid not on the list is auto-kicked via the same connect-line regex hook used by the banlist. An empty allowlist disables enforcement (open server). The banlist still applies independently regardless of allowlist state.
+- **`/allows` HTTP API.** `GET /allows` returns `{"enforced":bool,"allow":[...]}`. `POST /allows` accepts `{"steamid","note"}` and adds an entry. `DELETE /allows/{steamid}` removes one. Same `X-RCON-Password` / `Authorization: Bearer` auth as the rest of the API.
+- **Startup status line.** SboxServerConsole prints `allowlist persisted to <path> (entries: N, enforced: yes|no)` so operators can confirm at a glance whether enforcement is active.
+
 ## [1.2.0] - 2026-04-28
 
 ### Added

@@ -66,6 +66,7 @@ using var server = new ServerProcess(config, buffer, MirrorChildOutputLine);
 using var audit = new AuditLog(config.AuditLogPath);
 using var discord = new DiscordWebhook(config.DiscordWebhookUrl);
 using var banlist = new Banlist(config, server, buffer, audit, discord);
+using var allowlist = new Allowlist(config, server, buffer, audit);
 using var scheduler = new Scheduler(config, server, buffer, audit);
 using var a2s = new A2SQuery(config, buffer);
 var logs = new LogsBrowser(config.LogsDir);
@@ -98,7 +99,7 @@ catch (Exception ex)
 HttpApi http;
 try
 {
-    http = new HttpApi(config, server, buffer, audit, banlist, scheduler, a2s, logs);
+    http = new HttpApi(config, server, buffer, audit, banlist, allowlist, scheduler, a2s, logs);
     http.Start();
 }
 catch (Exception ex)
@@ -129,6 +130,7 @@ if (config.DashboardEnabled) Status($"dashboard:    http://{config.BindAddress}:
 if (audit.Enabled) Status($"audit log: {audit.Path}");
 if (discord.Enabled) Status("Discord webhook configured");
 if (banlist.Persisted) Status($"banlist persisted to {config.BanlistPath} (connect-regex: {(banlist.ConnectRegexConfigured ? "set" : "unset")})");
+if (allowlist.Persisted) Status($"allowlist persisted to {config.AllowlistPath} (entries: {allowlist.Count}, enforced: {(allowlist.Enforced ? "yes" : "no")})");
 if (scheduler.Persisted) Status($"scheduler persisted to {config.SchedulerPath}");
 if (a2s.Enabled) Status($"A2S poller every {config.QueryPollSeconds}s on udp/{config.QueryPort}");
 if (logs.Enabled) Status($"logs browser exposing {logs.Root}");

@@ -6,7 +6,7 @@
 [![Source RCON](https://img.shields.io/badge/Source_RCON-Built--in-green.svg)](https://developer.valvesoftware.com/wiki/Source_RCON_Protocol)
 [![s&box](https://img.shields.io/badge/s%26box-Dedicated_Server-darkred.svg)](https://steamdb.info/app/1892930/)
 
-Everything your s&box dedicated server is missing. Source RCON, a live web console, A2S player tracking, banlist enforcement, scheduled commands, lifecycle control, auto-restart on crash, audit log, and Discord notifications. Runs on Windows and Linux. No s&box code changes required.
+Everything your s&box dedicated server is missing. Source RCON, a live web console, A2S player tracking, banlist + allowlist (whitelist) enforcement, scheduled commands, lifecycle control, auto-restart on crash, audit log, and Discord notifications. Runs on Windows and Linux. No s&box code changes required.
 
 > **Recommended Hosting:** Get s&box server hosting with S&box Server Console pre-installed at [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=readme&utm_campaign=sbox_server_console)
 
@@ -59,6 +59,7 @@ A clean REST surface over the same supervisor. Useful when you want JSON instead
 | `POST /chat` | Broadcast to in-game chat. See [Chat Broadcast](#chat-broadcast) below. |
 | `GET /players` | A2S roster + regex-tracked player list |
 | `GET/POST /bans` `DELETE /bans/<steamid>` | Banlist CRUD |
+| `GET/POST /allows` `DELETE /allows/<steamid>` | Allowlist (whitelist) CRUD; non-empty list auto-kicks unlisted steamids |
 | `GET/POST /scheduler` `DELETE /scheduler/<id>` | Scheduled commands |
 | `POST /server/{start,stop,restart}` | Lifecycle control |
 | `GET /logs` `GET /logs/<name>?tail=N` | Read-only log file browser |
@@ -115,6 +116,18 @@ JSON-backed, persists across restarts. Every connect-line that matches your `--c
 {
   "bans": [
     { "steamid": "76561197960287930", "reason": "griefing", "added_by": "127.0.0.1", "added_at": "2026-04-27T15:30:00.000Z" }
+  ]
+}
+```
+
+### Allowlist (Whitelist)
+Same connect-line hook as the banlist, inverted. When the allowlist is **non-empty**, any connecting steamid not on the list is auto-kicked. Empty allowlist disables enforcement (open server). The banlist still applies regardless of allowlist state.
+
+```json
+{
+  "allow": [
+    { "steamid": "76561197960287930", "note": "owner",       "added_by": "127.0.0.1", "added_at": "2026-04-27T15:30:00.000Z" },
+    { "steamid": "76561198012345678", "note": "co-admin",    "added_by": "127.0.0.1", "added_at": "2026-04-27T15:31:00.000Z" }
   ]
 }
 ```
@@ -240,6 +253,7 @@ For the staging branch, append `-beta staging` to the `+app_update` line.
   "bind": "127.0.0.1",
   "audit-log": "C:\\sbox-server\\sboxconsole\\audit.jsonl",
   "banlist": "C:\\sbox-server\\sboxconsole\\bans.json",
+  "allowlist": "C:\\sbox-server\\sboxconsole\\allowlist.json",
   "scheduler": "C:\\sbox-server\\sboxconsole\\schedule.json",
   "logs-dir": "C:\\sbox-server\\logs"
 }
@@ -291,6 +305,7 @@ chmod +x SboxServerConsole
   "bind": "127.0.0.1",
   "audit-log": "/var/log/sboxconsole/audit.jsonl",
   "banlist": "/var/lib/sboxconsole/banlist.json",
+  "allowlist": "/var/lib/sboxconsole/allowlist.json",
   "scheduler": "/var/lib/sboxconsole/scheduler.json",
   "logs-dir": "/var/log/sboxconsole"
 }

@@ -18,6 +18,7 @@ public sealed class CliConfig
     public required string AuditLogPath { get; init; }
     public required string DiscordWebhookUrl { get; init; }
     public required string BanlistPath { get; init; }
+    public required string AllowlistPath { get; init; }
     public required string SchedulerPath { get; init; }
     public required string KickCommandTemplate { get; init; }
     public required string ConnectLineRegex { get; init; }
@@ -114,6 +115,7 @@ public sealed class CliConfig
         string auditLogPath = Get("audit-log", "");
         string discordWebhookUrl = Get("discord-webhook", "");
         string banlistPath = Get("banlist", "");
+        string allowlistPath = Get("allowlist", "");
         string schedulerPath = Get("scheduler", "");
         string kickCommandTemplate = Get("kick-command", "kick {steamid}");
         // sbox-server.exe stdout shapes (verified live on a 207139 demo run):
@@ -187,6 +189,7 @@ public sealed class CliConfig
             AuditLogPath = auditLogPath,
             DiscordWebhookUrl = discordWebhookUrl,
             BanlistPath = banlistPath,
+            AllowlistPath = allowlistPath,
             SchedulerPath = schedulerPath,
             KickCommandTemplate = kickCommandTemplate,
             ConnectLineRegex = connectLineRegex,
@@ -243,6 +246,8 @@ public sealed class CliConfig
               --audit-log <path>        JSONL audit; rotated at 10MB, 10 generations
               --discord-webhook <url>   Discord-compatible webhook for lifecycle notifications
               --banlist <path>          JSON banlist; auto-kicks banned steamids on connect
+              --allowlist <path>        JSON allowlist; when non-empty, kicks any steamid NOT on the list
+                                        on connect. Empty allowlist disables enforcement (open server).
               --kick-command <tpl>      template for kick command, {steamid} placeholder (default "kick {steamid}")
               --connect-regex <re>      regex with named (?<steamid>...) capture; banlist enforced when matches
                                         default matches sbox "<name> [STEAMID64] is connecting"
