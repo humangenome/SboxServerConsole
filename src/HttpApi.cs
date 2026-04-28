@@ -168,7 +168,7 @@ public sealed class HttpApi : IDisposable
     void Version(HttpListenerContext ctx)
     {
         var asm = typeof(HttpApi).Assembly;
-        string ver = asm.GetName().Version?.ToString() ?? "0.0.0";
+        string ver = asm.GetName().Version?.ToString(3) ?? "0.0.0";
         var json = $$"""
             {"sidecar":"SboxServerConsole","version":"{{ver}}","child_pid":{{_server.ChildPid}},"child_alive":{{(_server.IsAlive ? "true" : "false")}}}
             """;

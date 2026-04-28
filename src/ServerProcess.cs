@@ -33,6 +33,7 @@ public sealed class ServerProcess : IDisposable
 
     readonly CliConfig _cfg;
     readonly MessageBuffer _buffer;
+    readonly Action<string>? _localConsoleMirror;
     readonly object _lifecycleLock = new();
     readonly object _stdinLock = new();
 
@@ -50,10 +51,11 @@ public sealed class ServerProcess : IDisposable
 
     public event Action? OnSupervisorExit;
 
-    public ServerProcess(CliConfig cfg, MessageBuffer buffer)
+    public ServerProcess(CliConfig cfg, MessageBuffer buffer, Action<string>? localConsoleMirror = null)
     {
         _cfg = cfg;
         _buffer = buffer;
+        _localConsoleMirror = localConsoleMirror;
         _suppressRe = string.IsNullOrWhiteSpace(cfg.SuppressLineRegex)
             ? null
             : SafeCompile(cfg.SuppressLineRegex);
@@ -252,6 +254,7 @@ public sealed class ServerProcess : IDisposable
         var line = sb.ToString().TrimEnd();
         sb.Clear();
         if (line.Length == 0) return;
+        _localConsoleMirror?.Invoke(line);
         if (_suppressRe is not null && _suppressRe.IsMatch(line)) return;
         if (TryFormatStructuredChatLine(line, out var chatLine))
         {

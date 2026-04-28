@@ -4,6 +4,16 @@ All notable changes to S&box Server Console are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-28
+
+### Added
+
+- **Local terminal command input.** When SboxServerConsole is launched in an interactive Windows or Linux terminal, typed lines are forwarded directly to the running s&box server the same way `/execute`, RCON, and dashboard commands are.
+
+### Changed
+
+- **Child server output now mirrors to the wrapper terminal.** The local process window shows the child server's live stdout before the dashboard suppression filter runs, so host operators watching the Windows console or a Linux terminal see the unsuppressed server stream while the web dashboard can still suppress noisy frame/status lines. The mirror is best-effort under extreme terminal backpressure so child output draining is never blocked by a slow local console.
+
 ## [1.1.1] - 2026-04-28
 
 ### Added
