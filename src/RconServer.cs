@@ -64,7 +64,7 @@ public sealed class RconServer : IDisposable
         _ => IPAddress.TryParse(s, out var ip) ? ip : IPAddress.Loopback,
     };
 
-    public bool Enabled => !string.IsNullOrEmpty(_cfg.RconPassword) && _cfg.RconPort > 0;
+    public bool Enabled => !_cfg.RconDisabled && !string.IsNullOrEmpty(_cfg.RconPassword) && _cfg.RconPort > 0;
 
     public void Start()
     {

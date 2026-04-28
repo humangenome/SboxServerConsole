@@ -4,6 +4,17 @@ All notable changes to S&box Server Console are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-04-27
+
+### Fixed
+
+- **`/stream` left clients hanging on quiet servers.** With `SendChunked = true` the HTTP response headers do not actually go on the wire until the first body byte; on a server with no recent /chat or /execute traffic, the first byte was the heartbeat after 15s, so browser EventSource and most reverse proxies gave up well before that and the dashboard sat on "Connecting…". The handler now writes a `: connected\n\n` SSE comment and the requested `?history=N` backlog snapshot before entering the live loop, so the client transitions to `onopen` immediately.
+- **`?history=N` query parameter** is now honored by `/stream`, returning the last N entries from the ring buffer at connection time so dashboards do not have to follow `GET /history` with a separate `GET /stream`.
+
+### Added
+
+- **`--rcon-disabled` flag** to suppress the Source RCON TCP listener while leaving the HTTP API running. Useful for hosts that want to keep an in-panel console but close the public RCON port; equivalent to `RconServer.Enabled = false` and surfaces in the panel as a "Source RCON: Enabled / Disabled" toggle.
+
 ## [1.0.1] - 2026-04-27
 
 ### Fixed

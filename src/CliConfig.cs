@@ -12,6 +12,7 @@ public sealed class CliConfig
     public required int RconPort { get; init; }
     public required string BindAddress { get; init; }
     public required string RconPassword { get; init; }
+    public required bool RconDisabled { get; init; }
     public required int BufferSize { get; init; }
     public required string ShutdownCommand { get; init; }
     public required string AuditLogPath { get; init; }
@@ -80,7 +81,7 @@ public sealed class CliConfig
                 return null;
             }
             string key = a[2..];
-            if (key == "dashboard-disabled" || key == "no-auto-restart")
+            if (key == "dashboard-disabled" || key == "no-auto-restart" || key == "rcon-disabled")
             {
                 raw[key] = "true";
                 continue;
@@ -107,6 +108,7 @@ public sealed class CliConfig
         int queryPollSeconds = Math.Clamp(GetInt("query-poll-sec", 30), 0, 3600);
         string bindAddress = Get("bind", "127.0.0.1");
         string rconPassword = Get("rcon-password", "");
+        bool rconDisabled = GetBool("rcon-disabled", false);
         int bufferSize = Math.Clamp(GetInt("buffer-size", 500), 10, 10000);
         string shutdownCommand = Get("shutdown-command", "quit");
         string auditLogPath = Get("audit-log", "");
@@ -179,6 +181,7 @@ public sealed class CliConfig
             RconPort = rconPort.Value,
             BindAddress = bindAddress,
             RconPassword = rconPassword,
+            RconDisabled = rconDisabled,
             BufferSize = bufferSize,
             ShutdownCommand = shutdownCommand,
             AuditLogPath = auditLogPath,
@@ -234,6 +237,7 @@ public sealed class CliConfig
               --query-poll-sec <n>      A2S poll interval; 0=disabled (default 30)
               --bind <addr>             listen address (default 127.0.0.1; use 0.0.0.0 for LAN)
               --rcon-password <str>     required for /execute, /stream, /history (any non-empty)
+              --rcon-disabled           do not bind the Source RCON TCP listener (HTTP API still works)
               --buffer-size <int>       log ring buffer (10..10000, default 500)
               --shutdown-command <str>  console command sent on graceful stop (default "quit")
               --audit-log <path>        JSONL audit; rotated at 10MB, 10 generations

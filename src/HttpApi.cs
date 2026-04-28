@@ -335,6 +335,35 @@ public sealed class HttpApi : IDisposable
             ctx.Response.SendChunked = true;
             var stream = ctx.Response.OutputStream;
 
+            // Browser EventSource fires onerror if the proxy/load-balancer closes the
+            // connection before the first body byte. With SendChunked the response headers
+            // do not actually go on the wire until the first Write, so a quiet server
+            // (no /chat or /execute traffic) leaves the client hanging until the 15s
+            // heartbeat — which is past most browser/proxy connect-idle limits. Emit an
+            // SSE comment line and a backlog snapshot before entering the live loop so
+            // the client transitions to onopen instantly.
+            int historyCount = 0;
+            if (int.TryParse(ctx.Request.QueryString["history"], out int hc))
+                historyCount = Math.Clamp(hc, 0, _cfg.BufferSize);
+
+            try
+            {
+                var hello = Encoding.UTF8.GetBytes(": connected\n\n");
+                stream.Write(hello, 0, hello.Length);
+                stream.Flush();
+                if (historyCount > 0)
+                {
+                    foreach (var e in _buffer.Tail(historyCount))
+                    {
+                        var payload = $"data: {{\"seq\":{e.SeqNo},\"stream\":\"{e.Stream}\",\"line\":{JsonEncodedString(e.Line)}}}\n\n";
+                        var bytes = Encoding.UTF8.GetBytes(payload);
+                        stream.Write(bytes, 0, bytes.Length);
+                    }
+                    stream.Flush();
+                }
+            }
+            catch { /* client gone before first byte; loop will exit on next heartbeat */ }
+
             // Async loop with cancellable WaitToReadAsync prevents abandoned waiters from accumulating.
             StreamLoopAsync(ch, stream).GetAwaiter().GetResult();
         }

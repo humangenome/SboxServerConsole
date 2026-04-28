@@ -1,5 +1,8 @@
 name: Release
 
+# Triggered by pushing a version tag (v1.0.1, v1.1.0, etc.).
+# Master commits alone do not build a release — only tagged versions do.
+
 on:
   push:
     tags:
@@ -40,6 +43,38 @@ jobs:
             publish/SboxServerConsole.exe
             SboxServerConsole.zip
 
+      - name: Extract release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $changelog = Get-Content CHANGELOG.md
+          $section = @()
+          $capture = $false
+          foreach ($line in $changelog) {
+            if ($line -match "^## \[$([regex]::Escape($tag))\]") { $capture = $true; continue }
+            if ($capture -and $line -match "^## \[") { break }
+            if ($capture) { $section += $line }
+          }
+          if ($section.Count -eq 0) {
+            Write-Error "No CHANGELOG section found for v$tag"
+            exit 1
+          }
+          $utmTag = $tag -replace '\.', '_'
+          $notes = @()
+          $notes += "Bug fix and improvement release."
+          $notes += ""
+          $notes += $section
+          $notes += ""
+          $notes += "## Install / Upgrade"
+          $notes += ""
+          $notes += "Download ``SboxServerConsole.exe`` (or ``SboxServerConsole.zip``) and drop it next to your s&box dedicated server. Launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#getting-started). Reinstalling is safe — bans, scheduler jobs, and audit logs persist across restarts."
+          $notes += ""
+          $notes += "## Official Hosting"
+          $notes += ""
+          $notes += "Don't want to run your own server? [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=release&utm_campaign=sbox_console_v$utmTag) offers s&box dedicated servers with SboxServerConsole pre-installed and panel-integrated."
+          $notes -join "`n" | Set-Content -Path release_notes.md -Encoding utf8
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -47,4 +82,4 @@ jobs:
           files: |
             publish/SboxServerConsole.exe
             SboxServerConsole.zip
-          generate_release_notes: true
+          body_path: release_notes.md
