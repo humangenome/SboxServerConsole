@@ -67,7 +67,7 @@ Auth is a single bearer token: `Authorization: Bearer <password>` or `X-RCON-Pas
 
 ### Chat Broadcast
 
-`POST /chat` forwards to the s&box `say` ConCommand. s&box's argument tokenizer truncates at the first whitespace character (Unicode category `Zs`) — including ASCII space, U+00A0 non-breaking space, and quoted strings — see [Facepunch/sbox-public#2507](https://github.com/Facepunch/sbox-public/issues/2507). To deliver multi-word messages intact, S&box Server Console substitutes ASCII spaces with U+00B7 (middle dot, category `Po`), which the tokenizer treats as a single token and the chat HUD renders as a visible separator: `hello world` arrives as `hello·world`. Single-word messages pass through unchanged.
+`POST /chat` forwards to the s&box `say` ConCommand. s&box's argument tokenizer truncates at the first whitespace character (Unicode category `Zs`) — including ASCII space, U+00A0 non-breaking space, and quoted strings — see [Facepunch/sbox-public#2507](https://github.com/Facepunch/sbox-public/issues/2507). To deliver multi-word messages intact, S&box Server Console substitutes whitespace runs with U+00B7 (middle dot, category `Po`), which the tokenizer treats as a single token and the chat HUD renders as a visible separator: `hello world` arrives as `hello·world`. Single-word messages pass through unchanged.
 
 ```bash
 curl -X POST -H "X-RCON-Password: $TOKEN" \
@@ -76,6 +76,16 @@ curl -X POST -H "X-RCON-Password: $TOKEN" \
   http://your-host:27019/chat
 # in-game chat: server·restarting·in·5·minutes
 ```
+
+Successful `/chat` calls also append `Server: <text>` to `/history` and `/stream` with `stream:"chat"`.
+
+Inbound player chat is game-owned in s&box. SboxServerConsole cannot capture it unless the running game or local project emits a line to stdout. For local projects, log a structured line like this from the server-side chat path:
+
+```csharp
+Log.Info( "SSCHAT {\"steamid\":\"76561197960287930\",\"name\":\"Player\",\"message\":\"hello\"}" );
+```
+
+The agent turns that into a `chat` stream entry with a readable `Player: hello` line.
 
 `POST /execute` accepts any other console command s&box supports, and RCON-issued `kick` / banlist enforcement work today.
 

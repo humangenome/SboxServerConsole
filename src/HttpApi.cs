@@ -3,6 +3,7 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
 namespace SboxServerConsole;
@@ -280,7 +281,7 @@ public sealed class HttpApi : IDisposable
         // literal `say "hello world"` only delivers "hello" to the handler.
         // U+00A0 (NBSP) was tried in v2.0.6 and also got eaten because .NET's
         // char.IsWhiteSpace classifies all Zs-category code points as whitespace.
-        // Workaround: substitute ASCII spaces with U+00B7 (middle-dot) — Unicode
+        // Workaround: substitute whitespace runs with U+00B7 (middle-dot) — Unicode
         // category Po (Punctuation/Other), guaranteed not whitespace under any
         // tokenizer, renders as a visible word separator in the chat client.
         if (ctx.Request.HttpMethod != "POST")
@@ -301,7 +302,7 @@ public sealed class HttpApi : IDisposable
         if (text.Length > 512) { Write(ctx, 400, "application/json", "{\"error\":\"text too long (512 char max)\"}"); return; }
         if (text.Contains('\n') || text.Contains('\r')) { Write(ctx, 400, "application/json", "{\"error\":\"text may not contain newline\"}"); return; }
 
-        string transcribed = text.Replace(' ', '·');
+        string transcribed = Regex.Replace(text.Trim(), @"\s+", "·");
         string cmd = "say " + transcribed;
         bool ok = _server.TrySendCommand(cmd);
         Interlocked.Increment(ref _executeTotal);
@@ -312,6 +313,7 @@ public sealed class HttpApi : IDisposable
             ["success"] = ok,
         });
         if (!ok) { Write(ctx, 503, "application/json", "{\"error\":\"child not running\"}"); return; }
+        _buffer.Append("chat", $"Server: {text}");
         Write(ctx, 200, "application/json", "{\"ok\":true}");
     }
 

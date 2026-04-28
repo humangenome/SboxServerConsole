@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace SboxServerConsole;
@@ -17,6 +19,18 @@ namespace SboxServerConsole;
 //     restart logic.
 public sealed class ServerProcess : IDisposable
 {
+    sealed class StructuredChatLine
+    {
+        [JsonPropertyName("steamid")]
+        public string? SteamId { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("message")]
+        public string? Message { get; set; }
+    }
+
     readonly CliConfig _cfg;
     readonly MessageBuffer _buffer;
     readonly object _lifecycleLock = new();
@@ -239,7 +253,52 @@ public sealed class ServerProcess : IDisposable
         sb.Clear();
         if (line.Length == 0) return;
         if (_suppressRe is not null && _suppressRe.IsMatch(line)) return;
+        if (TryFormatStructuredChatLine(line, out var chatLine))
+        {
+            _buffer.Append("chat", chatLine);
+            return;
+        }
         _buffer.Append("stdout", line);
+    }
+
+    static bool TryFormatStructuredChatLine(string line, out string chatLine)
+    {
+        chatLine = "";
+        const string marker = "SSCHAT ";
+        int markerAt = line.IndexOf(marker, StringComparison.Ordinal);
+        if (markerAt < 0) return false;
+
+        var payload = line[(markerAt + marker.Length)..].Trim();
+        if (payload.Length == 0) return false;
+
+        if (payload[0] != '{')
+        {
+            chatLine = CleanChatField(payload, 600);
+            return chatLine.Length > 0;
+        }
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<StructuredChatLine>(payload);
+            var message = CleanChatField(parsed?.Message, 512);
+            if (message.Length == 0) return false;
+
+            var name = CleanChatField(parsed?.Name, 80);
+            if (name.Length == 0) name = CleanChatField(parsed?.SteamId, 32);
+            chatLine = name.Length > 0 ? $"{name}: {message}" : message;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    static string CleanChatField(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        var cleaned = value.Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ').Trim();
+        return cleaned.Length > maxLength ? cleaned[..maxLength] : cleaned;
     }
 
     void WatchExit()

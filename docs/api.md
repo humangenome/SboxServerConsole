@@ -35,8 +35,8 @@ No auth required. Suitable for Docker/Kubernetes liveness probes.
 {"entries":[{"seq":42,"at":"2026-04-26T20:14:00.123Z","stream":"stdout","line":"..."}]}
 ```
 
-`count` is clamped to `--buffer-size`. Streams are `stdout`, `input`,
-`system`.
+`count` is clamped to `--buffer-size`. Streams include `stdout`, `input`,
+`system`, `agent`, `stderr`, and `chat`.
 
 ### `POST /execute[?collect=1]`
 
@@ -55,6 +55,17 @@ With `collect=1`: returns lines that arrived in the next
 {"ok":true,"output":[
   {"seq":99,"stream":"stdout","line":"player count: 0"}
 ]}
+```
+
+### `POST /chat`
+
+Body: `{"text": "server restarting in 5 minutes"}`. `text` <= 512 chars,
+no newlines.
+
+Forwards to s&box `say` and appends a `stream:"chat"` entry on success:
+
+```json
+{"ok":true}
 ```
 
 ### `GET /stream`
