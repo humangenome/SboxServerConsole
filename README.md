@@ -216,6 +216,8 @@ By default the HTTP and RCON listeners bind `127.0.0.1` (localhost-only). To acc
 
 ## Installation
 
+You need an s&box dedicated server installed. If you don't have one yet, you can [rent s&box hosting from SurvivalServers](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=readme&utm_campaign=sbox_server_console) (S&box Server Console comes pre-installed and integrated with the control panel) or follow the steps below to set one up yourself.
+
 S&box Server Console runs on Windows (x64) and Linux (x64). Pick the section for your platform.
 
 ### Common to both: install the s&box Dedicated Server
