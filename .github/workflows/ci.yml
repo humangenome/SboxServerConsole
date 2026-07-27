@@ -1,0 +1,68 @@
+name: CI
+
+# Build check on every push and PR. Tagged releases are handled by release.yml.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build (warnings are errors)
+        run: dotnet build src/SboxServerConsole.csproj -c Release -warnaserror
+
+      - name: Changelog has a section for the current version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep -oPm1 '(?<=<Version>)[^<]+' src/SboxServerConsole.csproj)"
+          if ! grep -qF "## [$version]" CHANGELOG.md; then
+            echo "csproj <Version> is $version but CHANGELOG.md has no '## [$version]' section." >&2
+            exit 1
+          fi
+          echo "CHANGELOG has a section for $version"
+
+      - name: Publish both targets
+        run: |
+          set -euo pipefail
+          dotnet publish src/SboxServerConsole.csproj -c Release -r win-x64 \
+            --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/win-x64
+          dotnet publish src/SboxServerConsole.csproj -c Release -r linux-x64 \
+            --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-x64
+
+      - name: Leak gate on shipped binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Log literals and embedded resources land in the binary's string table.
+          # Nothing about a private deployment, a host address, or a hosting panel
+          # may ship inside a public artifact.
+          pattern='sspanel|passrcon|gameserverid|b-cdn\.net|bitbucket\.org|survivalservers\.com/games/|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{4,5}'
+          fail=0
+          for f in publish/win-x64/SboxServerConsole.exe publish/linux-x64/SboxServerConsole; do
+            echo "--- $f"
+            if strings -a "$f" | grep -inE "$pattern"; then
+              echo "::error file=$f::leak gate matched in $f"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "leak gate clean"
+          exit "$fail"

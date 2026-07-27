@@ -118,7 +118,7 @@ public sealed class CliConfig
         string allowlistPath = Get("allowlist", "");
         string schedulerPath = Get("scheduler", "");
         string kickCommandTemplate = Get("kick-command", "kick {steamid}");
-        // sbox-server.exe stdout shapes (verified live on a 207139 demo run):
+        // sbox-server.exe stdout shapes (verified live against a running server):
         //   "01:20:36 Generic  Joe [76561198966650247] is connecting"   - connect
         //   "01:21:25 Generic  Joe [76561198966650247] is connected"    - connect (post-handshake)
         //   "SteamIdSocket - steamid:N: Disconnection (N)"              - disconnect

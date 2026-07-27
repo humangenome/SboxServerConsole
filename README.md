@@ -36,7 +36,7 @@ s&box ships no RCON. S&box Server Console adds one, exposing a TCP listener that
 mcrcon -H your-host -P 27020 -p YourPassword "say Hello from RCON"
 ```
 
-The RCON port is `+port + 5` by default and only binds when `--rcon-password` is set. Commands are forwarded to the s&box dedicated server console as-is; run `help` over RCON to enumerate the full command set your server build supports.
+The RCON port is `+port + 5` by default. The listener binds only when all three of these hold: `--rcon-disabled` is not passed, `--rcon-password` is non-empty, and `--rcon-port` is greater than 0. Otherwise it never opens a socket. Commands are forwarded to the s&box dedicated server console as-is; run `help` over RCON to enumerate the full command set your server build supports.
 
 ### Live Web Dashboard
 Single embedded HTML page, no build step. Live console feed via Server-Sent Events, players list, ban management, scheduled commands, server status. Every action is gated by your RCON password and remembered for the session.
@@ -179,7 +179,7 @@ The agent and the s&box engine bind several ports. Behind a firewall, allow the 
 |-------|-------|----------|---------|
 | 27015 | UDP   | yes      | `--child-port`. s&box game traffic + A2S query (when `+net_query_port == +port`). |
 | 27019 | TCP   | yes      | `--listen-port` (default `child-port + 4`). HTTP API, SSE stream, web dashboard. |
-| 27020 | TCP   | optional | `--rcon-port` (default `child-port + 5`). Source RCON. Binds only when `--rcon-password` is set. |
+| 27020 | TCP   | optional | `--rcon-port` (default `child-port + 5`). Source RCON. Binds only when RCON is enabled, the password is non-empty, and the port is > 0. |
 
 All entries are inbound. If `+net_query_port` differs from `+port`, that UDP port also needs to be open inbound to be visible to the Steam server browser.
 
@@ -210,7 +210,7 @@ sudo iptables -A INPUT -p tcp --dport 27020 -j ACCEPT      # only if using RCON
 
 Multi-instance: give each s&box instance its own `--child-port` and the listen / rcon ports shift in lockstep. Keep ranges non-overlapping (e.g. `27015-27020`, `27025-27030`, `27035-27040`).
 
-By default the HTTP and RCON listeners bind `127.0.0.1` (localhost-only). To accept connections from outside the host, pass `--bind 0.0.0.0` *and* open the firewall. Empty-string `--rcon-password` disables the RCON listener entirely (it never binds).
+By default the HTTP and RCON listeners bind `127.0.0.1` (localhost-only). To accept connections from outside the host, pass `--bind 0.0.0.0` *and* open the firewall. An empty `--rcon-password`, `--rcon-disabled`, or `--rcon-port 0` each disable the RCON listener entirely (it never binds).
 
 ---
 
@@ -348,9 +348,11 @@ Everything passable as a `--flag` on the command line is also a kebab-case key i
 
 1. **Microsoft SmartScreen**: "Windows protected your PC". Click *More info* → *Run anyway*. SmartScreen filters new unsigned binaries by reputation; once enough machines run a given build it stops warning, but every fresh release starts at zero reputation.
 2. **Mark-of-the-Web zone block**: if you downloaded the zip in a browser, Windows tags the extracted files as "from the internet". Right-click `SboxServerConsole.exe` → *Properties* → check *Unblock* → *OK*. Or run from PowerShell: `Unblock-File .\SboxServerConsole.exe`.
-3. **Antivirus heuristic flags**: occasionally an AV vendor flags an unsigned single-file .NET self-contained publish as suspicious. The full source builds locally with `dotnet publish` (see [Build](#build)) and reproduces byte-for-byte from a tagged release commit, so you can verify rather than trust.
+3. **Antivirus heuristic flags**: occasionally an AV vendor flags an unsigned single-file .NET self-contained publish as suspicious. The full source builds locally with `dotnet publish` (see [Build](#build)), so you can build the binary yourself rather than trust the download.
 
-The Linux release tarball ships an unsigned ELF binary. SHA-256 sums for each release artifact are visible on the GitHub Release page and reproducible from a tagged source commit via `dotnet publish -r linux-x64 --self-contained -p:PublishSingleFile=true`.
+The Linux release tarball ships an unsigned ELF binary.
+
+**On reproducibility.** The compile is deterministic: two publishes of the same commit on the same machine, with the same .NET SDK and runtime pack, produce byte-identical output. It is *not* reproducible across environments — a different SDK patch level or runtime pack version changes the bytes, so a local rebuild of a release tag will generally not match the SHA-256 of the CI-built artifact on the Release page. Treat the published checksums as integrity for the file you downloaded, not as something a local build is expected to reproduce.
 
 If your environment policy forbids running unsigned binaries, you can build from source on either platform — the same code, your own signing chain.
 

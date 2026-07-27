@@ -25,6 +25,19 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Assert the tag matches the assembly version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(grep -oPm1 '(?<=<Version>)[^<]+' src/SboxServerConsole.csproj)"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag v$tag does not match csproj <Version> $version. Bump the csproj in the tagged commit." >&2
+            exit 1
+          fi
+          echo "tag v$tag matches assembly version $version"
+
       - name: Publish win-x64 single-file binary
         run: |
           dotnet publish src/SboxServerConsole.csproj \
@@ -59,6 +72,22 @@ jobs:
           cp README.md LICENSE stage/
           cp -r examples stage/examples
           tar -czf SboxServerConsole-linux-x64.tar.gz -C stage .
+
+      - name: Leak gate on shipped binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='sspanel|passrcon|gameserverid|b-cdn\.net|bitbucket\.org|survivalservers\.com/games/|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{4,5}'
+          fail=0
+          for f in publish/win-x64/SboxServerConsole.exe publish/linux-x64/SboxServerConsole; do
+            echo "--- $f"
+            if strings -a "$f" | grep -inE "$pattern"; then
+              echo "::error file=$f::leak gate matched in $f"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "leak gate clean"
+          exit "$fail"
 
       - uses: actions/upload-artifact@v4
         with:
