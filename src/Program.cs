@@ -1,6 +1,16 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using SboxServerConsole;
+
+// FIRST, before anything touches Console or signals: a background job started
+// by a non-interactive shell inherits SIGINT as SIG_IGN, and the runtime honors
+// that by never hooking an originally-ignored signal — neither CancelKeyPress
+// nor PosixSignalRegistration ever fires, and the agent cannot be stopped with
+// SIGINT in exactly the contexts init scripts and wrappers use. Reset the
+// disposition to default before the runtime captures it, so the shutdown
+// handlers registered below always see the signal.
+ResetInheritedSignalDispositions();
 
 string AgentVersion() => Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
 
@@ -159,6 +169,18 @@ _ = discord.SendAsync(
     $"Listening on `{config.BindAddress}:{config.ListenPort}`. Child pid `{server.ChildPid}` on port `{config.ChildPort}`.",
     DiscordWebhook.ColorGreen);
 
+// Shutdown signals. CancelKeyPress alone is not enough: it only fires for an
+// interactive Ctrl-C, so a SIGINT delivered by kill(1), an init system, or any
+// non-interactive context never reached it and the agent kept serving as if
+// nothing happened. PosixSignalRegistration sees the raw signal on every
+// platform. Cancel = true suppresses the runtime's default handling — for
+// SIGTERM that default is a hard exit on a ~2 s budget, which used to kill the
+// process before the child was stopped and left the game server orphaned.
+// With it cancelled, the main thread below runs the same graceful stop for
+// SIGINT and SIGTERM alike: ask the child to shut down, then kill the process
+// tree if it will not, then exit 0.
+using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; done.Set(); });
+using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; done.Set(); });
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; done.Set(); };
 AppDomain.CurrentDomain.ProcessExit += (_, _) => done.Set();
 
@@ -169,6 +191,16 @@ childConsoleMirror?.CompleteAdding();
 try { childConsoleMirrorThread?.Join(1000); } catch { }
 
 return 0;
+
+static void ResetInheritedSignalDispositions()
+{
+    if (OperatingSystem.IsWindows()) return;
+    try { _ = UnixSignal(2 /* SIGINT */, IntPtr.Zero /* SIG_DFL */); }
+    catch { /* exotic libc without signal(2) — nothing to reset */ }
+
+    [DllImport("libc", EntryPoint = "signal", SetLastError = true)]
+    static extern IntPtr UnixSignal(int signum, IntPtr handler);
+}
 
 static bool CanMirrorChildOutputToLocalConsole()
 {
