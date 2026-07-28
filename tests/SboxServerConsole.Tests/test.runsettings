@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <!-- Several tests supervise real child processes. If one of them ever hangs,
+         abort the session instead of letting a CI runner sit on it. -->
+    <TestSessionTimeout>900000</TestSessionTimeout>
+  </RunConfiguration>
+</RunSettings>

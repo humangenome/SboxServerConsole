@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>SboxServerConsole.Tests</RootNamespace>
+    <AssemblyName>SboxServerConsole.Tests</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/SboxServerConsole.csproj" />
+  </ItemGroup>
+
+  <!-- The drift tests read the real route table and the real config keys straight
+       out of the source and compare them against docs/api.md. Embedding the files
+       keeps those tests independent of the working directory the runner uses. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../src/HttpApi.cs" LogicalName="src.HttpApi.cs" />
+    <EmbeddedResource Include="../../src/CliConfig.cs" LogicalName="src.CliConfig.cs" />
+    <EmbeddedResource Include="../../docs/api.md" LogicalName="docs.api.md" />
+    <EmbeddedResource Include="../../README.md" LogicalName="README.md" />
+  </ItemGroup>
+
+</Project>
