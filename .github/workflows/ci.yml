@@ -29,6 +29,13 @@ jobs:
       - name: Build (warnings are errors)
         run: dotnet build src/SboxServerConsole.csproj -c Release -warnaserror
 
+      - name: Test
+        timeout-minutes: 20
+        run: |
+          dotnet test tests/SboxServerConsole.Tests/SboxServerConsole.Tests.csproj \
+            --settings tests/SboxServerConsole.Tests/test.runsettings \
+            -warnaserror
+
       - name: Changelog has a section for the current version
         shell: bash
         run: |

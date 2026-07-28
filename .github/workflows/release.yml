@@ -38,6 +38,15 @@ jobs:
           fi
           echo "tag v$tag matches assembly version $version"
 
+      # A release is blocked on the same suite CI runs. Behaviour regressions must
+      # not reach a published binary.
+      - name: Test
+        timeout-minutes: 20
+        run: |
+          dotnet test tests/SboxServerConsole.Tests/SboxServerConsole.Tests.csproj \
+            --settings tests/SboxServerConsole.Tests/test.runsettings \
+            -warnaserror
+
       - name: Publish win-x64 single-file binary
         run: |
           dotnet publish src/SboxServerConsole.csproj \
