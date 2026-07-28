@@ -15,20 +15,24 @@ namespace SboxServerConsole;
 [SupportedOSPlatform("macos")]
 sealed class PosixProcessGroup : IProcessGroup
 {
-    Process? _proc;
+    int _pid;
     bool _disposed;
 
-    public void AssignProcess(Process p) => _proc = p;
+    // Hold the pid rather than the Process object: the caller owns that object and
+    // disposes it as soon as the assignment returns, and a disposed Process throws
+    // on every member — which silently turned this whole cleanup into a no-op.
+    public void AssignProcess(Process p) => _pid = p.Id;
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        if (_proc is null) return;
+        if (_pid <= 0) return;
         try
         {
-            if (!_proc.HasExited) _proc.Kill(entireProcessTree: true);
+            using var p = Process.GetProcessById(_pid);
+            if (!p.HasExited) p.Kill(entireProcessTree: true);
         }
-        catch { }
+        catch { /* already gone */ }
     }
 }
