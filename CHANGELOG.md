@@ -4,6 +4,17 @@ All notable changes to S&box Server Console are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-07-28
+
+### Fixed
+
+- **SIGINT was ignored in non-interactive contexts.** When the agent was launched as a background job of a non-interactive shell (init scripts, wrappers), it inherited SIGINT as ignored and the runtime never delivered the signal — the agent kept serving forever and could not be stopped with SIGINT. The inherited disposition is now reset at startup and both SIGINT and SIGTERM are handled through `PosixSignalRegistration`, so either signal runs the same graceful shutdown.
+- **SIGTERM orphaned the game server.** Termination used to go through the runtime's process-exit path, which hard-exits on a short budget before the child is stopped — the game server was left running with no supervisor. Both signals now stop the child (escalating to a process-tree kill if it ignores the shutdown command) before the agent exits cleanly.
+
+### Changed
+
+- Builds no longer embed the build machine's checkout path in shipped binaries, and the build fails if such a path ever reappears (checked in ASCII and UTF-16).
+
 ## [1.3.2] - 2026-07-28
 
 ### Fixed

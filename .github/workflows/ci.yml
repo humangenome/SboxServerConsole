@@ -66,10 +66,14 @@ jobs:
           fail=0
           for f in publish/win-x64/SboxServerConsole.exe publish/linux-x64/SboxServerConsole; do
             echo "--- $f"
-            if strings -a "$f" | grep -inE "$pattern"; then
-              echo "::error file=$f::leak gate matched in $f"
-              fail=1
-            fi
+            # Both encodings: .NET string tables store UTF-16, which an
+            # ASCII-only strings pass reports as clean.
+            for enc in s l; do
+              if strings -a -e "$enc" "$f" | grep -inE "$pattern"; then
+                echo "::error file=$f::leak gate matched in $f (strings -e $enc)"
+                fail=1
+              fi
+            done
           done
           [ "$fail" -eq 0 ] && echo "leak gate clean"
           exit "$fail"
