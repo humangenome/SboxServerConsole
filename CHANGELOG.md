@@ -4,6 +4,17 @@ All notable changes to S&box Server Console are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Shutdown hang on Linux when the server was still running.** Stopping the agent (or restarting a child that ignores the shutdown command) disposed the child's stdout stream while the output reader was still blocked on it, which never returned. The child is now stopped before its streams are torn down, so shutdown and restart complete instead of wedging the process.
+- **Linux process-group cleanup never ran.** The tree-kill helper held a process handle its caller had already released, so every cleanup attempt failed silently and orphaned children could survive an agent restart.
+
+### Added
+
+- **Test suite.** Covers persistence round-trips, HTTP and RCON auth, ban/allowlist enforcement, scheduler persistence, audit-log formatting, log-browser path confinement, child supervision, and a `docs/api.md`-versus-implementation drift check. Runs on every push and blocks a release on failure.
+
 ## [1.3.1] - 2026-04-28
 
 ### Fixed
