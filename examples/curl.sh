@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Worked example: drive SboxServerConsole from curl. Set HOST and PWD to match
+# Worked example: drive SboxServerConsole from curl. Set HOST and RCON_PASSWORD to match
 # your install. All authenticated calls accept either:
 #   - X-RCON-Password header (preferred)
 #   - ?password=... query string (fallback for browser EventSource)
 
 HOST="${HOST:-http://127.0.0.1:27019}"
-PWD="${PWD:?set PWD to your --rcon-password}"
-H="X-RCON-Password: $PWD"
+# Not PWD — the shell always sets that to the current directory, so the guard
+# below would never fire and every call would authenticate with a path.
+RCON_PASSWORD="${RCON_PASSWORD:?set RCON_PASSWORD to your --rcon-password}"
+H="X-RCON-Password: $RCON_PASSWORD"
 
 # Health (no auth)
 curl -s "$HOST/health" | jq .

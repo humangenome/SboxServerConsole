@@ -33,23 +33,33 @@ Returns the dashboard HTML (single-file, vanilla JS). Disable with
 
 No auth required. Suitable for Docker/Kubernetes liveness probes.
 
-## Authenticated
-
 ### `GET /version`
 
 ```json
 {"sidecar":"SboxServerConsole","version":"1.3.1","child_pid":4567,"child_alive":true}
 ```
 
+No auth required, same as `/health` — version probes and upgrade checks run
+before a client has credentials.
+
 The `sidecar` key is a compatibility artifact of the pre-1.0 wire format and is
 kept deliberately — existing clients key off it. Do not rename it.
+
+## Authenticated
 
 ### `GET /status`
 
 ```json
-{"child_alive":true,"child_pid":4567,"uptime_sec":900,
- "buffer_capacity":500,"listen_port":27019,"child_port":27015}
+{"child_alive":true,"child_pid":4567,"child_uptime_sec":900,"child_memory_bytes":734003200,
+ "child_cpu_seconds":"128.44","sidecar_uptime_sec":910,"buffer_capacity":500,
+ "listen_port":27019,"child_port":27015,"query_port":27016,"execute_total":12,
+ "stream_clients_active":1,
+ "server":{"name":"My Server","map":"facepunch.datacore","folder":"sbox","game":"sbox",
+           "players":3,"max_players":16,"bots":0,"fetched_at":"2026-04-26T20:14:00.000Z"}}
 ```
+
+`server` is the last A2S_INFO snapshot, or `null` when the poller is disabled
+(`--query-poll-sec 0`) or has not answered yet.
 
 ### `GET /history?count=N`
 
@@ -70,9 +80,9 @@ Without `collect`:
 {"ok":true}
 ```
 
-With `collect=1`: returns lines that arrived in the next
-`--execute-collect-ms` window (default 250 ms). `?wait_ms=<n>` overrides that
-window for a single call and is clamped to 50–10000:
+With `collect=1`: returns lines that arrived in the next 250 ms.
+`?wait_ms=<n>` overrides that window for a single call and is clamped to
+50–10000:
 
 ```json
 {"ok":true,"output":[
@@ -114,10 +124,9 @@ client, oldest entries are dropped (the seq numbers will skip).
  "a2s_players":[{"name":"alice","score":12,"duration_sec":1430.4}]}
 ```
 
-`players` is the agent's own roster, populated by either the configured
-`--connect-regex` (push: every connect event updates the roster) or the
-`--status-poll-sec` poller (pull: parses the configured `--status-regex` over
-polled output). It is empty until one of those is configured.
+`players` is the agent's own roster, populated from the child's own output by
+the configured `--connect-regex` and `--disconnect-regex`. It is empty until a
+connect line matches.
 
 `a2s_players` is the authoritative roster the child reports over A2S_PLAYER on
 `--query-port`. It carries no steamids — that is what the A2S protocol returns.
