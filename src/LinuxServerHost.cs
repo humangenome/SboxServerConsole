@@ -80,15 +80,27 @@ public sealed class LinuxServerHost : IServerHost
     {
         if (_disposed) return;
         _disposed = true;
-        try { OutputStream?.Dispose(); } catch { }
-        try { InputStream?.Dispose(); } catch { }
+        // Stop the child BEFORE touching the streams. Disposing the redirected
+        // stdout stream while the output pump thread is parked in a blocking
+        // Read does not return until the read completes, and the read only
+        // completes when the child closes its end of the pipe — so disposing a
+        // host whose child is still running would block forever.
         if (_proc is not null)
         {
             try
             {
-                if (!_proc.HasExited) _proc.Kill(entireProcessTree: true);
+                if (!_proc.HasExited)
+                {
+                    _proc.Kill(entireProcessTree: true);
+                    _proc.WaitForExit(5000);
+                }
             }
             catch { }
+        }
+        try { OutputStream?.Dispose(); } catch { }
+        try { InputStream?.Dispose(); } catch { }
+        if (_proc is not null)
+        {
             try { _proc.Dispose(); } catch { }
             _proc = null;
         }
