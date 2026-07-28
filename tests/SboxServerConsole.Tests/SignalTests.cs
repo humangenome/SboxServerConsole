@@ -58,7 +58,8 @@ public class SignalTests : IDisposable
         // has to kill the tree, and an orphan cannot exit by itself.
         var stub = _scratch.File("stubborn.sh");
         File.WriteAllText(stub, "#!/bin/sh\nwhile :; do IFS= read -r line || sleep 1; done\n");
-        File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
         int httpPort = Ports.Free();
         var agentArgs = new List<string>
