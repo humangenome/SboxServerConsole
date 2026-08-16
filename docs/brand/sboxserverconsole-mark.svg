@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SboxServerConsole">
+  <title>SboxServerConsole</title>
+  <!-- Flat SboxServerConsole mark, drawn for small sizes (favicon, dashboard
+       header, 16-32px icon frames). The detailed badge keeps every surface that has
+       room. Deleted here: the open square bracket frame, the inner screen panel,
+       the gloss sweep and the bevels - a frame inside a disc leaves the prompt under
+       a third of the diameter. Kept: the prompt caret and the cursor block. The
+       field is inverted against the detailed badge: a near-black disc disappears on
+       a dark UI, so the blue becomes the field and the prompt is drawn white on top
+       of it. No outlines - white on saturated blue needs none, and an outline at
+       this size only eats the white. -->
+  <circle cx="256" cy="256" r="248" fill="#1D5FD8"/>
+  <circle cx="256" cy="256" r="228" fill="#2A75FA"/>
+  <path fill="none" stroke="#FFFFFF" stroke-width="74" stroke-linecap="round" stroke-linejoin="round" d="M136 150l132 106-132 106"/>
+  <rect x="338" y="160" width="84" height="192" rx="12" fill="#FFFFFF"/>
+</svg>

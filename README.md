@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/sboxserverconsole-lockup.png" alt="SboxServerConsole" width="480">
+</p>
+
 # S&box Server Console
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

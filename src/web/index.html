@@ -4,11 +4,14 @@
 <meta charset="utf-8">
 <title>SboxServerConsole</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Inline so the dashboard stays a single self-contained file with no extra request -->
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNTYiIHI9IjI0OCIgZmlsbD0iIzFENUZEOCIvPjxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iMjI4IiBmaWxsPSIjMkE3NUZBIi8+PHBhdGggZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9Ijc0IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGQ9Ik0xMzYgMTUwbDEzMiAxMDYtMTMyIDEwNiIvPjxyZWN0IHg9IjMzOCIgeT0iMTYwIiB3aWR0aD0iODQiIGhlaWdodD0iMTkyIiByeD0iMTIiIGZpbGw9IiNmZmYiLz48L3N2Zz4=">
 <style>
   :root { color-scheme: dark; --bg:#1a1a1f; --panel:#22232a; --border:#2c2d36; --fg:#e8e8ec; --mute:#8a8d99; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --ipt:#15161b; }
   * { box-sizing: border-box; }
   body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); }
   header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; background:var(--panel); }
+  header .brand { width:20px; height:20px; flex:0 0 20px; display:block; margin-right:-6px; }
   header h1 { font-size:14px; margin:0; font-weight:600; }
   header .pill { font-size:11px; padding:2px 8px; border-radius:99px; background:#0d0e12; border:1px solid var(--border); color:var(--mute); }
   header .ok { color:var(--ok); border-color:var(--ok); }
@@ -48,6 +51,7 @@
 </head>
 <body>
 <header>
+  <svg class="brand" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="248" fill="#1D5FD8"/><circle cx="256" cy="256" r="228" fill="#2A75FA"/><path fill="none" stroke="#fff" stroke-width="74" stroke-linecap="round" stroke-linejoin="round" d="M136 150l132 106-132 106"/><rect x="338" y="160" width="84" height="192" rx="12" fill="#fff"/></svg>
   <h1>SboxServerConsole</h1>
   <span id="pill-child" class="pill">child: ?</span>
   <span id="pill-uptime" class="pill">uptime: ?</span>
