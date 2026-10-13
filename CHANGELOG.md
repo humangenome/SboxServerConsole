@@ -1,15 +1,54 @@
 # Changelog
 
-All notable changes to S&box Server Console are documented here.
+All notable changes to SboxServerConsole are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.4.0] - 2026-10-12
+
+Checked against the s&box dedicated server build of 2026-10-02 (26.10.02) on Windows and Linux.
+
+### Fixed
+
+- **Linux: commands, kicks and bans now reach the server.** The s&box server only reads console input when its output is a terminal, and the agent ran it on plain pipes, so on Linux every command, RCON call, scheduled job, ban kick, allowlist kick and the graceful `quit` was accepted and then silently dropped. The server now runs on a pseudo-terminal the agent holds. If no pseudo-terminal can be opened, the agent says so at startup.
+- **`POST /server/stop` no longer shuts the agent down.** Stopping the server ended the whole agent, so `POST /server/start` could never be reached. The agent now stays up with the server stopped.
+- **Requested restarts always restart.** `POST /server/restart` counted against the crash-restart limit, and with `--no-auto-restart` it shut the agent down instead of restarting the server. Neither happens now.
+- **The A2S query port default matches the server.** Without `+net_query_port` the s&box server answers A2S on 27016, but the agent polled the game port and never got an answer.
+- **`/chat` tells the truth.** `say` comes from the running game, and many games (the stock `facepunch.sandbox` included) do not have one. The route now answers `422` instead of reporting a broadcast nobody received. Messages are sent as one quoted argument, so they arrive with their spaces instead of `hello·world`.
+- **Player names and chat show their real characters.** Non-ASCII text (accents, Cyrillic, CJK) came out garbled, and terminal colour codes split across reads leaked into the console.
+- **Status on Windows describes the server.** Memory and CPU in `/status` were those of the PowerShell wrapper that gives the server its console. They now come from the s&box server process, reported as `server_pid`.
+- **The roster empties when the server exits**, a leave is announced once even when the server prints two lines for it, and the current "disconnected" line is recognised.
+- **Example configs no longer switch bans off.** Both example configs set `connect-regex` to an empty string, which disabled join detection for anyone who copied them. An empty value now means the default, and the examples no longer carry it.
+- **The systemd example can write its own files.** Its sandboxing made the README's `/var/lib/sboxconsole` and `/var/log/sboxconsole` paths read-only.
+- **Dashboard fixes.** The uptime pill showed "NaN", the stats panel called an API route that never existed, the player list ignored A2S, the command bar could sit below the window, and there was no allowlist tab. All fixed.
+
+### Security
+
+- A player name can no longer pass another SteamID through a join line (for example a name ending in `[<SteamID>] is connecting`); the real SteamID, printed last by the server, always wins.
+- After 10 wrong passwords in a minute from one address, the HTTP API and RCON refuse that address for 5 minutes. Local connections are never locked out.
+- An RCON client that does not log in within 10 seconds is disconnected, so idle connections cannot hold every slot.
+- Commands containing line breaks or control characters are refused everywhere (HTTP, RCON, scheduler, kick template), so one command cannot carry a second one or a Ctrl-C.
+- Bans and allowlist entries must be a 17-digit SteamID64 when the default connect regex is in use; anything else could never match and is refused with `400`.
+- The log browser never lists or serves hidden files or dot-files on any platform, which keeps the agent's config (and its RCON password) out of `/logs`.
+- Discord messages can no longer ping `@everyone` or a role through a player name.
+
+### Added
+
+- `/stream` events carry an `id`, and a reconnecting client gets exactly the lines it missed (`Last-Event-ID`, or `?since=<seq>`).
+- `POST /scheduler` works without an `id` and returns the one it made.
+- Startup warnings for settings the agent does not recognise, for regexes that do not compile and for an empty RCON password.
+- A warning when A2S reports players but no join line has matched for three minutes: the roster, bans and the allowlist cannot see joins on that server build.
+- A banlist, allowlist or scheduler file that cannot be read is kept as `<name>.unreadable-<time>` instead of being overwritten by the next save.
+- The agent exits with code 4 when the server keeps crashing and auto-restart gives up (0 after a normal stop), so a service manager can act on it.
+- A failing Discord webhook is reported once on the console, and once more when it works again.
+- `SHA256SUMS` on every release.
 
 ## [1.3.3] - 2026-07-28
 
 ### Fixed
 
-- **SIGINT was ignored in non-interactive contexts.** When the agent was launched as a background job of a non-interactive shell (init scripts, wrappers), it inherited SIGINT as ignored and the runtime never delivered the signal — the agent kept serving forever and could not be stopped with SIGINT. The inherited disposition is now reset at startup and both SIGINT and SIGTERM are handled through `PosixSignalRegistration`, so either signal runs the same graceful shutdown.
-- **SIGTERM orphaned the game server.** Termination used to go through the runtime's process-exit path, which hard-exits on a short budget before the child is stopped — the game server was left running with no supervisor. Both signals now stop the child (escalating to a process-tree kill if it ignores the shutdown command) before the agent exits cleanly.
+- **SIGINT was ignored in non-interactive contexts.** When the agent was launched as a background job of a non-interactive shell (init scripts, wrappers), it inherited SIGINT as ignored and the runtime never delivered the signal; the agent kept serving forever and could not be stopped with SIGINT. The inherited disposition is now reset at startup and both SIGINT and SIGTERM are handled through `PosixSignalRegistration`, so either signal runs the same graceful shutdown.
+- **SIGTERM orphaned the game server.** Termination used to go through the runtime's process-exit path, which hard-exits on a short budget before the child is stopped; the game server was left running with no supervisor. Both signals now stop the child (escalating to a process-tree kill if it ignores the shutdown command) before the agent exits cleanly.
 
 ### Changed
 
@@ -75,7 +114,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Notes
 
-- Linux child supervision uses pipe-redirected stdin (no PTY). The Facepunch dedicated server on Linux is a regular .NET console app that reads from `Console.ReadLine`, so plain pipes work — no node-pty or libc PTY P/Invoke needed. If a future sbox build ever refuses pipe stdin on Linux the same way the Windows build refuses non-ConPTY input, file an issue and we'll add a Linux PTY backend.
+- Linux child supervision uses pipe-redirected stdin (no PTY). The Facepunch dedicated server on Linux is a regular .NET console app that reads from `Console.ReadLine`, so plain pipes work; no node-pty or libc PTY P/Invoke needed. If a future sbox build ever refuses pipe stdin on Linux the same way the Windows build refuses non-ConPTY input, file an issue and we'll add a Linux PTY backend.
 - macOS is not officially supported but the code paths compile and run there if you build from source. No release artifact is published for macOS.
 
 ## [1.0.3] - 2026-04-27
@@ -109,18 +148,18 @@ Initial public release.
 
 - **Source RCON server** speaking the [Valve binary protocol](https://developer.valvesoftware.com/wiki/Source_RCON_Protocol). Drop-in compatibility with mcrcon, rcon-cli, BattleMetrics, GameDig, RustyConnector, Pterodactyl. Default port is `+port + 5`; only binds when `--rcon-password` is set.
 - **HTTP + Server-Sent Events API** for browser/script automation. Bearer-token auth (`X-RCON-Password` or `Authorization: Bearer`). Endpoints: `/health`, `/version`, `/status`, `/history`, `/stream`, `/execute`, `/chat`, `/players`, `/bans`, `/scheduler`, `/server/{start,stop,restart}`, `/logs`. Default port is `+port + 4`.
-- **Embedded web dashboard** — single-page HTML, no build step. Live console feed, player roster, banlist editor, scheduled commands, lifecycle controls.
-- **A2S player tracking** via the standard A2S_INFO + A2S_PLAYER protocol on `+net_query_port`. Authoritative server name, map, and player roster — same protocol the Steam server browser uses.
+- **Embedded web dashboard**: single-page HTML, no build step. Live console feed, player roster, banlist editor, scheduled commands, lifecycle controls.
+- **A2S player tracking** via the standard A2S_INFO + A2S_PLAYER protocol on `+net_query_port`. Authoritative server name, map, and player roster; same protocol the Steam server browser uses.
 - **Chat broadcast** via `POST /chat`. Forwards to the s&box `say` ConCommand with U+00B7 (middle-dot) substituted for ASCII spaces, working around the engine's argument-tokenizer truncation at whitespace ([Facepunch/sbox-public#2507](https://github.com/Facepunch/sbox-public/issues/2507)). Multi-word messages render as `hello·world` in chat.
-- **Banlist with auto-kick** — JSON-backed, persists across restarts. Connect-line regex matches every joining player against the banlist and kicks immediately. Adding a ban for an already-connected player kicks them on next match.
-- **Scheduled commands** — `@every 30s` / `@every 5m` / `@every 12h` shorthand or full 5-field cron expressions, backed by [Cronos](https://github.com/HangfireIO/Cronos). Persisted to JSON.
+- **Banlist with auto-kick**: JSON-backed, persists across restarts. Connect-line regex matches every joining player against the banlist and kicks immediately. Adding a ban for an already-connected player kicks them on next match.
+- **Scheduled commands**: `@every 30s` / `@every 5m` / `@every 12h` shorthand or full 5-field cron expressions, backed by [Cronos](https://github.com/HangfireIO/Cronos). Persisted to JSON.
 - **Auto-restart on crash** with backoff and capped attempts inside a sliding window. Customer-initiated `/server/restart` calls bypass the cap.
-- **Lifecycle control** — `POST /server/{start,stop,restart}`. ServerProcess is restart-capable; the child gets replaced across crash-restart cycles while collaborators keep their references.
-- **Discord webhook notifications** — lifecycle (start/stop) and player join/leave events as color-coded embeds.
-- **Audit log** — append-only JSONL of every command, ban mutation, scheduler fire, and lifecycle event. Auto-rotates at 10MB, keeps 10 generations.
-- **Read-only logs browser** — `--logs-dir <path>` exposes file inventory at `GET /logs` and tail at `GET /logs/<name>?tail=N`. Path resolution is canonicalized + prefix-checked against the configured root.
-- **Process supervision** — Win32 Job Object kills the entire child tree on wrapper exit. ConPTY gives the child a real Windows console so it accepts stdin commands and emits readable stdout.
-- **Windows service installer** — `scripts/install-service.ps1` registers the agent with `sc.exe` autostart + restart-on-failure.
+- **Lifecycle control**: `POST /server/{start,stop,restart}`. ServerProcess is restart-capable; the child gets replaced across crash-restart cycles while collaborators keep their references.
+- **Discord webhook notifications**: lifecycle (start/stop) and player join/leave events as color-coded embeds.
+- **Audit log**: append-only JSONL of every command, ban mutation, scheduler fire, and lifecycle event. Auto-rotates at 10MB, keeps 10 generations.
+- **Read-only logs browser**: `--logs-dir <path>` exposes file inventory at `GET /logs` and tail at `GET /logs/<name>?tail=N`. Path resolution is canonicalized + prefix-checked against the configured root.
+- **Process supervision**: Win32 Job Object kills the entire child tree on wrapper exit. ConPTY gives the child a real Windows console so it accepts stdin commands and emits readable stdout.
+- **Windows service installer**: `scripts/install-service.ps1` registers the agent with `sc.exe` autostart + restart-on-failure.
 
 ### Known caveats
 

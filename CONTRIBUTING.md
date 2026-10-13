@@ -1,6 +1,6 @@
 # Contributing
 
-Hey — glad you're here. Whether it's a bug report, a new feature, or a tweak to the dashboard, contributions are welcome.
+Bug reports, fixes and new features are welcome.
 
 ## Found a bug?
 
@@ -10,10 +10,10 @@ Open an [issue](https://github.com/HumanGenome/SboxServerConsole/issues). Includ
 
 1. Fork the repo
 2. Make your changes on a branch
-3. Test against a real s&box dedicated server (the readme covers local setup)
-4. Open a PR — describe what it does and why
+3. Run the tests (`dotnet test tests/SboxServerConsole.Tests/SboxServerConsole.Tests.csproj --settings tests/SboxServerConsole.Tests/test.runsettings`) and, for anything that touches the server process, try it against a real s&box dedicated server (the README covers setup)
+4. Open a PR that says what it changes and why
 
-Keep code style consistent with what's already there. C# uses 4-space indent, file-scoped namespaces, and `Pascal.Case` for public APIs / `_camelCase` for private fields.
+Match the existing style: 4-space indent, file-scoped namespaces, `PascalCase` for public members and `_camelCase` for private fields. If you change an HTTP route or a setting, update `docs/api.md` too; the tests compare the two.
 
 ## Build / publish
 

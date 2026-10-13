@@ -20,7 +20,7 @@ assignees: ''
 **Environment**
 - SboxServerConsole version (from `--help` banner or `/version` endpoint):
 - OS + version (e.g. Windows Server 2022, Ubuntu 22.04):
-- s&box dedicated server build (from `+app_update 1892930` Steam log):
+- s&box dedicated server build (first line of the `.version` file in the server folder, e.g. 26.10.02):
 - Running as a service / systemd unit / direct launch:
 
 **Audit log + console output**

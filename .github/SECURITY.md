@@ -8,7 +8,7 @@ Report it through GitHub's private vulnerability reporting instead:
 
 **https://github.com/HumanGenome/SboxServerConsole/security/advisories/new**
 
-(Also reachable from the repo's **Security** tab → **Advisories** → **Report a vulnerability**.) The report stays private between you and the maintainers, and it gives us a place to draft the fix and credit you when it ships. This is the only reporting channel — there is no security mailing address.
+(Also reachable from the repo's **Security** tab → **Advisories** → **Report a vulnerability**.) The report stays private between you and the maintainers, and it gives us a place to draft the fix and credit you when it ships. This is the only reporting channel; there is no security mailing address.
 
 Include:
 - A description of the vulnerability
@@ -33,7 +33,7 @@ Out of scope:
 - Hardware-host vulnerabilities (those belong to your hosting provider)
 - Vulnerabilities in the s&box dedicated server itself (report to Facepunch)
 - Vulnerabilities in third-party s&box game packages or addons
-- Anti-cheat / cheating concerns — SboxServerConsole does not provide anti-cheat
+- Anti-cheat and cheating concerns: SboxServerConsole does not provide anti-cheat
 - Console commands doing what an authenticated operator asked for. `POST /execute` is intentionally a full console; protect the RCON password instead.
-- Binding the agent to `0.0.0.0` without a strong password, or terminating TLS. The default bind is `127.0.0.1` and the agent does not speak TLS — put a reverse proxy in front if you expose it.
-- SmartScreen / antivirus warnings on the unsigned release binary. That is documented in the README under "Trust & First-Run Warning".
+- Binding the agent to `0.0.0.0` without a strong password, or terminating TLS. The default bind is `127.0.0.1` and the agent does not speak TLS; put a reverse proxy in front if you expose it.
+- SmartScreen / antivirus warnings on the unsigned release binary. That is documented in the README under "Trust and first run".
