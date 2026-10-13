@@ -167,7 +167,7 @@ public class LifecycleTests : IDisposable
         // answer its own input handling eats the typed command.
         var probe = _s.File("probe.sh");
         File.WriteAllText(probe, "#!/bin/sh\nstty -icanon -echo min 0 time 30\nprintf '\\033[6n'\nr=$(dd bs=1 count=7 2>/dev/null | od -An -c | tr -d ' \\n')\necho \"reply=$r\"\nsleep 5\n");
-        File.SetUnixFileMode(probe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(probe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var cfg = Configs.Parse(_s.Dir, "--exe", probe, "--child-args", "", "--child-port", "27015", "--no-auto-restart");
         using var buf = new MessageBuffer(cfg.BufferSize);
         using var srv = new ServerProcess(cfg, buf);
@@ -259,7 +259,7 @@ public class LifecycleTests : IDisposable
         if (!Configs.CanSpawnShellChild) return;
         var crasher = _s.File("crash.sh");
         File.WriteAllText(crasher, "#!/bin/sh\necho starting\nsleep 1\nexit 7\n");
-        File.SetUnixFileMode(crasher, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(crasher, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         using var a = StartAgent(crasher, "--restart-max-attempts", "1", "--restart-backoff-sec", "1");
         Assert.True(a.Proc.WaitForExit(60000), "agent should give up and exit");
         Assert.Equal(4, a.Proc.ExitCode);

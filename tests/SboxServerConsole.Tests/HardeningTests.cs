@@ -166,7 +166,7 @@ public class HardeningTests
         using var s = new Scratch();
         var stub = s.File("nosay.sh");
         File.WriteAllText(stub, "#!/bin/sh\ncr=$(printf '\\r')\nwhile IFS= read -r line; do\n  line=${line%$cr}\n  case \"$line\" in\n    say*) echo \"08:00:00 Generic  Unknown Command 'say'\" ;;\n    exit) exit 0 ;;\n  esac\ndone\n");
-        File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         using var h = ApiHost.Create("--exe", stub, "--child-args", "", "--child-port", "27015", "--shutdown-command", "exit");
         h.StartChild();
         var (status, body) = await h.Call("POST", "/chat", json: "{\"text\":\"hello there\"}");
