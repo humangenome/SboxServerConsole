@@ -9,7 +9,7 @@
 # enabling the unit. KillMode=mixed ensures systemd reaps any orphaned
 # sbox-server children if the wrapper itself is killed hard (SIGKILL).
 [Unit]
-Description=S&box Server Console (process agent for sbox-server)
+Description=SboxServerConsole (process agent for the s&box dedicated server)
 After=network-online.target
 Wants=network-online.target
 
@@ -28,12 +28,16 @@ LimitNOFILE=65535
 StandardOutput=journal
 StandardError=journal
 
-# Recommended hardening — relax if your install path needs it.
+# Hardening. ProtectSystem=strict makes everything read-only except the paths
+# listed in ReadWritePaths, so list every directory your config writes to (the
+# server folder, plus the audit log, banlist, allowlist and scheduler folders).
+# Home directories stay readable because the s&box server can load the Steam
+# client library from ~/.steam/sdk64.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/sbox-server
+ProtectHome=read-only
+ReadWritePaths=/opt/sbox-server /var/log/sboxconsole /var/lib/sboxconsole
 
 [Install]
 WantedBy=multi-user.target

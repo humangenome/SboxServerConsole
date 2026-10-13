@@ -31,6 +31,9 @@ public sealed class RconServer : IDisposable
     const int ResponseCollectMs = 250;
     const int MaxConcurrentClients = 8;
     const int IdleTimeoutMs = 600_000;
+    // A client that has not authenticated gets a short leash, so a handful of idle
+    // connections cannot hold every slot for ten minutes.
+    const int AuthTimeoutMs = 10_000;
     static readonly TimeSpan AcceptCancelPoll = TimeSpan.FromMilliseconds(200);
 
     const int SERVERDATA_RESPONSE_VALUE = 0;
@@ -43,12 +46,14 @@ public sealed class RconServer : IDisposable
     readonly MessageBuffer _buffer;
     readonly AuditLog _audit;
     readonly TcpListener _listener;
+    readonly AuthThrottle _throttle;
     readonly CancellationTokenSource _cts = new();
     int _activeClients;
     Thread? _acceptThread;
 
-    public RconServer(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit)
+    public RconServer(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit, AuthThrottle? throttle = null)
     {
+        _throttle = throttle ?? new AuthThrottle();
         _cfg = cfg;
         _server = server;
         _buffer = buffer;
@@ -93,6 +98,11 @@ public sealed class RconServer : IDisposable
                     continue;
                 }
                 var client = _listener.AcceptTcpClient();
+                if (_throttle.IsLockedOut((client.Client.RemoteEndPoint as IPEndPoint)?.Address))
+                {
+                    try { client.Close(); } catch { }
+                    continue;
+                }
                 if (Interlocked.Increment(ref _activeClients) > MaxConcurrentClients)
                 {
                     Interlocked.Decrement(ref _activeClients);
@@ -112,10 +122,11 @@ public sealed class RconServer : IDisposable
     void HandleClient(TcpClient client)
     {
         var remote = client.Client.RemoteEndPoint?.ToString() ?? "?";
+        var remoteAddress = (client.Client.RemoteEndPoint as IPEndPoint)?.Address;
         try
         {
             client.NoDelay = true;
-            client.ReceiveTimeout = IdleTimeoutMs;
+            client.ReceiveTimeout = AuthTimeoutMs;
             client.SendTimeout = 5000;
             using var net = client.GetStream();
             bool authed = false;
@@ -131,6 +142,9 @@ public sealed class RconServer : IDisposable
                         break;
                     }
                     bool ok = ConstantTimeEquals(body, _cfg.RconPassword);
+                    if (ok) _throttle.RecordSuccess(remoteAddress);
+                    else if (_throttle.RecordFailure(remoteAddress))
+                        _buffer.Append("system", $"rcon: {remoteAddress} locked out for {AuthThrottle.Lockout.TotalMinutes:0} minutes after {AuthThrottle.MaxFailures} wrong passwords");
                     // mcrcon expects the empty mirror RESPONSE_VALUE before AUTH_RESPONSE.
                     SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "");
                     SendPacket(net, ok ? id : -1, SERVERDATA_AUTH_RESPONSE, "");
@@ -141,6 +155,7 @@ public sealed class RconServer : IDisposable
                     });
                     if (!ok) break;
                     authed = true;
+                    client.ReceiveTimeout = IdleTimeoutMs;
                     continue;
                 }
                 if (type != SERVERDATA_EXECCOMMAND)
@@ -151,6 +166,11 @@ public sealed class RconServer : IDisposable
                 if (string.IsNullOrEmpty(body))
                 {
                     SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "");
+                    continue;
+                }
+                if (!ServerProcess.IsSendableCommand(body))
+                {
+                    SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "command may not contain line breaks or control characters");
                     continue;
                 }
                 long preSeq = _buffer.LastSeq;
@@ -176,6 +196,11 @@ public sealed class RconServer : IDisposable
                 }
                 SendBodyChunked(net, id, sb.ToString());
             }
+        }
+        catch (IOException)
+        {
+            // Idle or unauthenticated timeout, or the client hung up. Internet scanners
+            // do this all day on a public port; it is not worth a console line.
         }
         catch (Exception ex)
         {

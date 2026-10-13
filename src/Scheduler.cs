@@ -36,6 +36,7 @@ public sealed class Scheduler : IDisposable
     readonly Dictionary<string, DateTime> _nextFire = new(StringComparer.OrdinalIgnoreCase);
     readonly CancellationTokenSource _cts = new();
     Thread? _thread;
+    bool _storeBlocked;
 
     public Scheduler(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit)
     {
@@ -67,11 +68,22 @@ public sealed class Scheduler : IDisposable
     }
 
     public bool TryAdd(string id, string schedule, string command, out string error)
+        => TryAdd(id, schedule, command, out error, out _);
+
+    public bool TryAdd(string id, string schedule, string command, out string error, out string jobId)
     {
         error = "";
-        if (string.IsNullOrWhiteSpace(id)) { error = "id required"; return false; }
+        jobId = "";
         if (string.IsNullOrWhiteSpace(schedule)) { error = "schedule required"; return false; }
         if (string.IsNullOrWhiteSpace(command)) { error = "command required"; return false; }
+        if (!ServerProcess.IsSendableCommand(command)) { error = "command may not contain line breaks or control characters"; return false; }
+        // The id is optional: generate a short one when the caller does not name the job.
+        if (string.IsNullOrWhiteSpace(id)) id = NewId();
+        else if (id.Length > 64 || id.Any(c => c == '/' || char.IsWhiteSpace(c) || char.IsControl(c)))
+        {
+            error = "id must be one token of at most 64 characters, without '/'";
+            return false;
+        }
         if (!TryComputeNext(schedule, DateTime.UtcNow, out _, out var perr)) { error = perr; return false; }
         var job = new Job
         {
@@ -81,6 +93,7 @@ public sealed class Scheduler : IDisposable
             Enabled = true,
             CreatedAt = DateTime.UtcNow.ToString("o"),
         };
+        jobId = id;
         lock (_lock)
         {
             _jobs[id] = job;
@@ -92,6 +105,18 @@ public sealed class Scheduler : IDisposable
             ["id"] = id, ["schedule"] = schedule, ["command"] = command,
         });
         return true;
+    }
+
+    string NewId()
+    {
+        lock (_lock)
+        {
+            while (true)
+            {
+                var id = "job-" + Guid.NewGuid().ToString("N")[..8];
+                if (!_jobs.ContainsKey(id)) return id;
+            }
+        }
     }
 
     public bool Remove(string id)
@@ -251,23 +276,21 @@ public sealed class Scheduler : IDisposable
         }
         catch (Exception ex)
         {
-            _buffer.Append("system", $"scheduler load failed: {ex.Message}");
+            // Keep the unreadable file: the next save would otherwise overwrite every job in it.
+            string? kept = StoreFile.SetAside(_path);
+            _jobs.Clear();
+            _storeBlocked = kept is null;
+            _buffer.Append("system", $"warn: scheduler {_path} could not be read ({ex.Message}); starting with no jobs" +
+                (kept is null ? " and NOT saving changes, so the file is left as it is" : $", the unreadable file was kept as {kept}"));
         }
     }
 
     void Save()
     {
-        if (_path is null) return;
-        var dir = Path.GetDirectoryName(_path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        if (_path is null || _storeBlocked) return;
         var opts = new JsonSerializerOptions { WriteIndented = true };
         var data = new SchedulerFile { Jobs = _jobs.Values.OrderBy(j => j.Id).ToList() };
-        var tmp = _path + ".tmp";
-        try
-        {
-            File.WriteAllText(tmp, JsonSerializer.Serialize(data, opts));
-            File.Move(tmp, _path, overwrite: true);
-        }
+        try { StoreFile.WriteAtomic(_path, JsonSerializer.Serialize(data, opts)); }
         catch (Exception ex)
         {
             _buffer.Append("system", $"scheduler save failed: {ex.Message}");

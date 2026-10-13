@@ -90,7 +90,15 @@ public class PersistenceTests
         var d = Deps(s, "--banlist", s.File("bans.json"));
         using var bans = new Banlist(d.Cfg, d.Srv, d.Buf, d.Audit, d.Discord);
         Assert.Empty(bans.All());
-        Assert.Contains(d.Buf.Tail(50), e => e.Line.Contains("banlist load failed"));
+        Assert.Contains(d.Buf.Tail(50), e => e.Line.Contains("could not be read"));
+
+        // The unreadable file is kept, so the next save cannot overwrite the operator's bans.
+        Assert.False(File.Exists(s.File("bans.json")));
+        var kept = Directory.GetFiles(s.Dir, "bans.json.unreadable-*");
+        Assert.Single(kept);
+        Assert.Equal("{ this is not json", File.ReadAllText(kept[0]));
+        Assert.True(bans.Add("76561198000000001", "griefing", "staff"));
+        Assert.Equal("{ this is not json", File.ReadAllText(kept[0]));
     }
 
     // ---- allowlist ----
@@ -265,14 +273,16 @@ public class PersistenceTests
         var d = Deps(s, "--scheduler", s.File("sched.json"));
         using var sched = new Scheduler(d.Cfg, d.Srv, d.Buf, d.Audit);
 
-        Assert.False(sched.TryAdd("", "@every 5m", "say hi", out string e1));
-        Assert.Equal("id required", e1);
         Assert.False(sched.TryAdd("x", "", "say hi", out string e2));
         Assert.Equal("schedule required", e2);
         Assert.False(sched.TryAdd("x", "@every 5m", "", out string e3));
         Assert.Equal("command required", e3);
         Assert.False(sched.TryAdd("x", "nonsense", "say hi", out string e4));
         Assert.Contains("invalid cron", e4);
+        Assert.False(sched.TryAdd("x", "@every 5m", "say hi\nquit", out string e5));
+        Assert.Contains("line breaks", e5);
+        Assert.False(sched.TryAdd("a/b", "@every 5m", "say hi", out string e6));
+        Assert.Contains("id must be", e6);
         Assert.Empty(sched.All());
         Assert.False(File.Exists(s.File("sched.json")));
     }
@@ -334,5 +344,40 @@ public class PersistenceTests
         var bad = s.File("bad.json");
         File.WriteAllText(bad, "{ nope");
         Assert.Null(CliConfig.Parse(new[] { "--config-file", bad }));
+    }
+
+    [Fact]
+    public void Scheduler_GeneratesAnIdWhenNoneIsGiven()
+    {
+        using var s = new Scratch();
+        var d = Deps(s, "--scheduler", s.File("sched.json"));
+        using var sched = new Scheduler(d.Cfg, d.Srv, d.Buf, d.Audit);
+
+        Assert.True(sched.TryAdd("", "@every 5m", "say hi", out string err, out string id), err);
+        Assert.StartsWith("job-", id);
+        Assert.Equal(id, Assert.Single(sched.All()).Id);
+    }
+
+    [Fact]
+    public void Allowlist_CorruptFileIsKeptAndReported()
+    {
+        using var s = new Scratch();
+        File.WriteAllText(s.File("allow.json"), "[[[");
+        var d = Deps(s, "--allowlist", s.File("allow.json"));
+        using var allow = new Allowlist(d.Cfg, d.Srv, d.Buf, d.Audit);
+        Assert.False(allow.Enforced);
+        Assert.Contains(d.Buf.Tail(50), e => e.Line.Contains("open to everyone"));
+        Assert.Single(Directory.GetFiles(s.Dir, "allow.json.unreadable-*"));
+    }
+
+    [Fact]
+    public void Scheduler_CorruptFileIsKept()
+    {
+        using var s = new Scratch();
+        File.WriteAllText(s.File("sched.json"), "nope");
+        var d = Deps(s, "--scheduler", s.File("sched.json"));
+        using var sched = new Scheduler(d.Cfg, d.Srv, d.Buf, d.Audit);
+        Assert.Empty(sched.All());
+        Assert.Single(Directory.GetFiles(s.Dir, "sched.json.unreadable-*"));
     }
 }

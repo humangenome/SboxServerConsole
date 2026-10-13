@@ -11,12 +11,16 @@ namespace SboxServerConsole;
 // (Banlist, Scheduler, HttpApi, RCON listener) keeps its single ServerProcess
 // reference and its calls transparently route to the current incarnation.
 //
-// Auto-restart policy (controlled by CliConfig):
-//   - On unexpected child exit, if AutoRestart is on, sleep RestartBackoffSeconds
-//     then spawn a new child. Cap at RestartMaxAttempts within RestartWindowSeconds.
-//   - When the cap is hit, OnSupervisorExit fires and the wrapper exits.
-//   - User-requested stops (ctrl-C, /server/stop, app shutdown) bypass the
-//     restart logic.
+// Why the child exits decides what happens next:
+//   - Requested restart (/server/restart): a new child starts right away. It does
+//     not count against the crash cap and works with --no-auto-restart too.
+//   - Requested stop (/server/stop): the child stays down and the agent keeps
+//     serving, so /server/start can bring it back.
+//   - Agent shutdown (signal, Ctrl-C): the child is stopped and the agent exits.
+//   - Anything else is a crash. With AutoRestart on, sleep RestartBackoffSeconds
+//     and spawn a new child, capped at RestartMaxAttempts inside
+//     RestartWindowSeconds. When the cap is hit, or AutoRestart is off,
+//     OnSupervisorExit fires with GaveUp set and the agent exits non-zero.
 public sealed class ServerProcess : IDisposable
 {
     sealed class StructuredChatLine
@@ -36,6 +40,8 @@ public sealed class ServerProcess : IDisposable
     readonly Action<string>? _localConsoleMirror;
     readonly object _lifecycleLock = new();
     readonly object _stdinLock = new();
+    readonly object _echoLock = new();
+    readonly List<(string Cmd, DateTime At)> _pendingEcho = new();
 
     IServerHost? _host;
     IProcessGroup? _group;
@@ -44,12 +50,21 @@ public sealed class ServerProcess : IDisposable
     CancellationTokenSource _childCts = new();
     DateTime _childStartedAt;
     int _lastExitCode = -1;
-    bool _userRequestedStop;
+    ExitIntent _intent = ExitIntent.None;
+    bool _gaveUp;
     int _restartAttemptsInWindow;
     DateTime _restartWindowStart;
     readonly Regex? _suppressRe;
 
+    enum ExitIntent { None, Restart, Stop, Shutdown }
+
+    // Fires when supervision ends: the agent is shutting down, or the child crashed
+    // and will not be restarted (see GaveUp).
     public event Action? OnSupervisorExit;
+
+    // Fires every time a child process exits, for any reason. Collaborators that
+    // hold per-session state (the player roster) reset on it.
+    public event Action? OnChildExited;
 
     public ServerProcess(CliConfig cfg, MessageBuffer buffer, Action<string>? localConsoleMirror = null)
     {
@@ -72,6 +87,36 @@ public sealed class ServerProcess : IDisposable
         get
         {
             lock (_lifecycleLock) return (int)(_host?.ChildProcessId ?? 0);
+        }
+    }
+
+    // The game server's own process. On Windows the child is the PowerShell wrapper
+    // that gives the server its console, so the server is found among the job
+    // object's processes by executable name. Falls back to the child.
+    public int ServerPid
+    {
+        get
+        {
+            IProcessGroup? group;
+            int child;
+            lock (_lifecycleLock) { group = _group; child = (int)(_host?.ChildProcessId ?? 0); }
+            if (group is null || !OperatingSystem.IsWindows()) return child;
+            string want = Path.GetFileNameWithoutExtension(_cfg.ChildExe);
+            try
+            {
+                foreach (int pid in group.ProcessIds())
+                {
+                    if (pid == child) continue;
+                    try
+                    {
+                        using var p = System.Diagnostics.Process.GetProcessById(pid);
+                        if (string.Equals(p.ProcessName, want, StringComparison.OrdinalIgnoreCase)) return pid;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return child;
         }
     }
 
@@ -101,6 +146,13 @@ public sealed class ServerProcess : IDisposable
         get { lock (_lifecycleLock) return _restartAttemptsInWindow; }
     }
 
+    // True when supervision ended because the child crashed and was not restarted
+    // (auto-restart off, or the crash cap was hit). The agent exits non-zero then.
+    public bool GaveUp
+    {
+        get { lock (_lifecycleLock) return _gaveUp; }
+    }
+
     public void Start() => StartChild(initial: true);
 
     public bool TryStartIfStopped()
@@ -118,7 +170,7 @@ public sealed class ServerProcess : IDisposable
         lock (_lifecycleLock)
         {
             DisposeChildLocked();
-            _userRequestedStop = false;
+            _intent = ExitIntent.None;
             _childCts = new CancellationTokenSource();
 
             string spawnExe;
@@ -157,9 +209,12 @@ public sealed class ServerProcess : IDisposable
 
             _host.Start(spawnExe, spawnArgs, _cfg.GameDir);
             _childStartedAt = DateTime.UtcNow;
+            if (_host.EmulatesTerminal) wrapperLabel = "pty";
             _buffer.Append("system", initial
                 ? $"shell wrapper ({wrapperLabel}) started pid={_host.ChildProcessId}"
                 : $"child restarted pid={_host.ChildProcessId}");
+            if (_host.FallbackReason is not null)
+                _buffer.Append("system", $"warn: no pseudo-terminal ({_host.FallbackReason}); the server will not read console commands, so commands, kicks, bans and the graceful quit cannot reach it");
 
             try
             {
@@ -188,8 +243,10 @@ public sealed class ServerProcess : IDisposable
         try { _childCts.Cancel(); } catch { }
         try { _group?.Dispose(); } catch { }
         try { _host?.Dispose(); } catch { }
-        try { _outputPump?.Join(2000); } catch { }
-        try { _exitWatcher?.Join(2000); } catch { }
+        // The exit watcher calls StartChild itself on a restart; joining the current
+        // thread would just burn the whole timeout before every restart.
+        try { if (_outputPump is not null && _outputPump != Thread.CurrentThread) _outputPump.Join(2000); } catch { }
+        try { if (_exitWatcher is not null && _exitWatcher != Thread.CurrentThread) _exitWatcher.Join(2000); } catch { }
         _host = null;
         _group = null;
         _outputPump = null;
@@ -202,59 +259,31 @@ public sealed class ServerProcess : IDisposable
         if (host is null) return;
         var stream = host.OutputStream;
         var buf = new byte[4096];
-        var line = new StringBuilder();
+        bool terminal = host.EmulatesTerminal;
+        var decoder = new ConsoleLineDecoder(l => HandleLine(l, terminal), breakOnCursorMove: terminal);
         try
         {
             while (!_childCts.IsCancellationRequested)
             {
                 int n = stream.Read(buf, 0, buf.Length);
                 if (n <= 0) break;
-                for (int i = 0; i < n; i++)
-                {
-                    byte b = buf[i];
-                    if (b == 0x1B) { i = SkipAnsi(buf, i, n); continue; }
-                    if (b == '\r') continue;
-                    if (b == '\n') { Flush(line); continue; }
-                    if (b < 0x20 && b != '\t') continue;
-                    line.Append((char)b);
-                    if (line.Length > 2000) Flush(line);
-                }
+                decoder.Feed(buf.AsSpan(0, n));
             }
         }
         catch (Exception ex) { _buffer.Append("system", $"output pump exception: {ex.Message}"); }
-        finally { Flush(line); }
+        finally { decoder.Flush(); }
     }
 
-    static int SkipAnsi(byte[] buf, int i, int len)
+    void HandleLine(string raw, bool terminal)
     {
-        if (i + 1 >= len) return i;
-        byte b1 = buf[i + 1];
-        i += 1;
-        if (b1 == '[')
-        {
-            i += 1;
-            while (i < len && (buf[i] < 0x40 || buf[i] > 0x7E)) i++;
-            return i;
-        }
-        if (b1 == ']')
-        {
-            i += 1;
-            while (i < len && buf[i] != 0x07) i++;
-            return i;
-        }
-        return i;
-    }
-
-    void Flush(StringBuilder sb)
-    {
-        if (sb.Length == 0) return;
         // sbox pads stdout lines with ~70 trailing spaces (column-aligned status display).
         // Strip that before suppression-match and before storing — saves bandwidth on the
         // SSE stream and makes /history actually readable.
-        var line = sb.ToString().TrimEnd();
-        sb.Clear();
+        // On a PTY the console's redraw fragments also carry leading padding.
+        var line = terminal ? raw.Trim() : raw.TrimEnd();
         if (line.Length == 0) return;
         if (_suppressRe is not null && _suppressRe.IsMatch(line)) return;
+        if (IsInputEcho(line)) return;
         _localConsoleMirror?.Invoke(line);
         if (TryFormatStructuredChatLine(line, out var chatLine))
         {
@@ -313,35 +342,70 @@ public sealed class ServerProcess : IDisposable
             while (!_childCts.IsCancellationRequested && !host.HasChildExited()) Thread.Sleep(500);
         }
         catch { }
+        // A cancelled watcher belongs to a child that StartChild is already replacing.
+        if (_childCts.IsCancellationRequested && !host.HasChildExited()) return;
         int code;
         try { code = host.ChildExitCode(); } catch { code = -1; }
-        bool userStopped;
-        bool autoRestart = _cfg.AutoRestart;
+        ExitIntent intent;
         lock (_lifecycleLock)
         {
+            if (!ReferenceEquals(_host, host)) return; // already replaced
             _lastExitCode = code;
-            userStopped = _userRequestedStop;
+            intent = _intent;
+            _intent = ExitIntent.None;
         }
-        _buffer.Append("system", $"child exited code={code} user_requested={(userStopped ? "yes" : "no")}");
+        lock (_echoLock) _pendingEcho.Clear();
+        try { OnChildExited?.Invoke(); } catch { }
 
-        if (userStopped || !autoRestart)
+        switch (intent)
         {
+            case ExitIntent.Restart:
+                _buffer.Append("system", $"child exited code={code} for a requested restart; starting a new one");
+                Thread.Sleep(1000);
+                try { StartChild(initial: false); }
+                catch (Exception ex)
+                {
+                    _buffer.Append("system", $"restart failed: {ex.Message}");
+                    lock (_lifecycleLock) _gaveUp = true;
+                    OnSupervisorExit?.Invoke();
+                }
+                return;
+            case ExitIntent.Stop:
+                _buffer.Append("system", $"child exited code={code}; server stopped on request (POST /server/start starts it again)");
+                return;
+            case ExitIntent.Shutdown:
+                _buffer.Append("system", $"child exited code={code}; agent shutting down");
+                OnSupervisorExit?.Invoke();
+                return;
+        }
+
+        _buffer.Append("system", $"child exited unexpectedly code={code}");
+        if (!_cfg.AutoRestart)
+        {
+            _buffer.Append("system", "auto-restart is off (--no-auto-restart); agent exiting");
+            lock (_lifecycleLock) _gaveUp = true;
             OnSupervisorExit?.Invoke();
             return;
         }
-        // Decide whether to restart or give up.
-        bool restart = TryClaimRestartSlot();
-        if (!restart)
+        if (!TryClaimRestartSlot())
         {
-            _buffer.Append("system", $"auto-restart cap of {_cfg.RestartMaxAttempts} hit inside {_cfg.RestartWindowSeconds}s window — giving up");
+            _buffer.Append("system", $"auto-restart cap of {_cfg.RestartMaxAttempts} hit inside {_cfg.RestartWindowSeconds}s window, giving up");
+            lock (_lifecycleLock) _gaveUp = true;
             OnSupervisorExit?.Invoke();
             return;
         }
         Thread.Sleep(TimeSpan.FromSeconds(_cfg.RestartBackoffSeconds));
+        lock (_lifecycleLock)
+        {
+            // Someone asked for a stop or shutdown during the backoff, or already started a child.
+            if (_intent is ExitIntent.Stop or ExitIntent.Shutdown) { _intent = ExitIntent.None; return; }
+            if (!ReferenceEquals(_host, host)) return;
+        }
         try { StartChild(initial: false); }
         catch (Exception ex)
         {
             _buffer.Append("system", $"auto-restart failed: {ex.Message}");
+            lock (_lifecycleLock) _gaveUp = true;
             OnSupervisorExit?.Invoke();
         }
     }
@@ -362,20 +426,43 @@ public sealed class ServerProcess : IDisposable
         }
     }
 
+    // A command is one line of plain text. Line breaks would smuggle a second,
+    // unaudited command in, and control characters reach the child's console as
+    // keystrokes (Ctrl-C included), so both are refused for every caller: HTTP,
+    // RCON, scheduler, kick templates and the local terminal.
+    public static bool IsSendableCommand(string cmd)
+    {
+        if (string.IsNullOrWhiteSpace(cmd)) return false;
+        foreach (char c in cmd)
+        {
+            if (c < 0x20 || c == 0x7F) return false;
+        }
+        return true;
+    }
+
     public bool TrySendCommand(string cmd)
     {
+        if (!IsSendableCommand(cmd))
+        {
+            _buffer.Append("system", "refused a command containing a line break or control character");
+            return false;
+        }
         IServerHost? host;
         lock (_lifecycleLock) host = _host;
         if (host is null) return false;
         if (host.HasChildExited()) return false;
         try
         {
+            lock (_echoLock)
+            {
+                _pendingEcho.Add((cmd, DateTime.UtcNow));
+                if (_pendingEcho.Count > 32) _pendingEcho.RemoveAt(0);
+            }
             lock (_stdinLock)
             {
-                // \r\n works on both Windows ConPTY (which expects CRLF as a line
-                // terminator from the host side) and Linux pipes (which strip the
-                // \r when sbox-server reads via Console.ReadLine).
-                var bytes = Encoding.UTF8.GetBytes(cmd + "\r\n");
+                // ConPTY takes CRLF from the host side; a PTY takes CR, which is what a
+                // terminal sends for Enter.
+                var bytes = Encoding.UTF8.GetBytes(cmd + host.LineTerminator);
                 host.InputStream.Write(bytes, 0, bytes.Length);
                 host.InputStream.Flush();
             }
@@ -389,12 +476,45 @@ public sealed class ServerProcess : IDisposable
         }
     }
 
-    public void Stop(TimeSpan timeout)
+    // The server's console redraws its input line after every key, so a typed
+    // "status" comes back as "s", "st", ... "status" (on a PTY) or as a partial
+    // "kick 7656119796" plus a bare ">" prompt (through ConPTY). Those redraws are
+    // dropped; the server's own "> status" line is kept.
+    bool IsInputEcho(string rawLine)
+    {
+        var line = rawLine.TrimStart();
+        lock (_echoLock)
+        {
+            if (_pendingEcho.Count == 0) return false;
+            if (line == ">") return true;
+            var cutoff = DateTime.UtcNow.AddSeconds(-60);
+            _pendingEcho.RemoveAll(p => p.At < cutoff);
+            for (int i = 0; i < _pendingEcho.Count; i++)
+            {
+                var cmd = _pendingEcho[i].Cmd;
+                if (line == "> " + cmd || line == ">" + cmd)
+                {
+                    _pendingEcho.RemoveAt(i);
+                    return false;
+                }
+                if (cmd.StartsWith(line, StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+    }
+
+    // Stops the child and leaves the agent running (POST /server/stop).
+    public void Stop(TimeSpan timeout) => StopChild(ExitIntent.Stop, timeout);
+
+    // Stops the child because the agent is exiting.
+    public void Shutdown(TimeSpan timeout) => StopChild(ExitIntent.Shutdown, timeout);
+
+    void StopChild(ExitIntent intent, TimeSpan timeout)
     {
         IServerHost? host;
         lock (_lifecycleLock)
         {
-            _userRequestedStop = true;
+            _intent = intent;
             host = _host;
         }
         if (host is null || host.HasChildExited()) return;
@@ -403,19 +523,29 @@ public sealed class ServerProcess : IDisposable
             TrySendCommand(_cfg.ShutdownCommand);
             var deadline = DateTime.UtcNow + timeout;
             while (DateTime.UtcNow < deadline && !host.HasChildExited()) Thread.Sleep(200);
-            if (!host.HasChildExited()) _buffer.Append("system", "graceful shutdown timed out, host dispose will kill child");
+            if (!host.HasChildExited())
+            {
+                _buffer.Append("system", "graceful shutdown timed out; killing the server process tree");
+                lock (_lifecycleLock)
+                {
+                    if (ReferenceEquals(_host, host)) { try { _group?.Dispose(); } catch { } try { host.Dispose(); } catch { } }
+                }
+            }
         }
         catch (Exception ex) { _buffer.Append("system", $"stop failed: {ex.Message}"); }
     }
 
+    // Requested restart: never refused by the crash cap, works with --no-auto-restart.
     public bool Restart(TimeSpan stopTimeout)
     {
         IServerHost? host;
-        lock (_lifecycleLock) host = _host;
+        lock (_lifecycleLock)
+        {
+            host = _host;
+            if (host is not null && !host.HasChildExited()) _intent = ExitIntent.Restart;
+        }
         if (host is not null && !host.HasChildExited())
         {
-            // Send graceful shutdown without flagging as user-requested stop —
-            // we want the auto-restart machinery to fire.
             try
             {
                 TrySendCommand(_cfg.ShutdownCommand);
@@ -423,18 +553,18 @@ public sealed class ServerProcess : IDisposable
                 while (DateTime.UtcNow < deadline && !host.HasChildExited()) Thread.Sleep(200);
             }
             catch { }
-            // If still alive, dispose the host (kills it).
+            // Still alive: kill it. The exit watcher sees the Restart intent and starts a new child.
             lock (_lifecycleLock)
             {
-                if (_host is not null && !_host.HasChildExited())
+                if (ReferenceEquals(_host, host) && !host.HasChildExited())
                 {
-                    try { _host.Dispose(); } catch { }
+                    try { _group?.Dispose(); } catch { }
+                    try { host.Dispose(); } catch { }
                 }
             }
-            // WatchExit thread will handle the auto-restart when it sees the exit.
             return true;
         }
-        // Child already dead — start a new one immediately.
+        // Child already dead (stopped, or between crash restarts): start a new one now.
         StartChild(initial: false);
         return true;
     }
@@ -443,7 +573,7 @@ public sealed class ServerProcess : IDisposable
     {
         lock (_lifecycleLock)
         {
-            _userRequestedStop = true;
+            _intent = ExitIntent.Shutdown;
             DisposeChildLocked();
         }
     }

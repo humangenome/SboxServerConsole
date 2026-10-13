@@ -77,3 +77,23 @@ jobs:
           done
           [ "$fail" -eq 0 ] && echo "leak gate clean"
           exit "$fail"
+
+  windows-smoke:
+    # The unit tests run on Linux. This runs the published exe on Windows, with
+    # cmd.exe standing in for the server, to cover ConPTY, the job object, HTTP.sys
+    # and the Windows service path.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish win-x64
+        run: dotnet publish src/SboxServerConsole.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/win-x64
+
+      - name: Smoke test (console and service)
+        timeout-minutes: 10
+        shell: pwsh
+        run: ./tests/windows-smoke.ps1 -Exe publish/win-x64/SboxServerConsole.exe

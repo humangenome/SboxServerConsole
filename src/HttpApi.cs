@@ -15,6 +15,7 @@ public sealed class HttpApi : IDisposable
     const int StreamChannelCapacity = 256;
     const int ExecuteCollectMsDefault = 250;
     const int ExecuteCollectMsMax = 10000;
+    const int ChatReplyWindowMs = 1000;
     static readonly TimeSpan StreamHeartbeatInterval = TimeSpan.FromSeconds(15);
 
     readonly CliConfig _cfg;
@@ -26,6 +27,7 @@ public sealed class HttpApi : IDisposable
     readonly Scheduler _scheduler;
     readonly A2SQuery _a2s;
     readonly LogsBrowser _logs;
+    readonly AuthThrottle _throttle;
     readonly HttpListener _listener;
     readonly CancellationTokenSource _cts = new();
     readonly DateTime _startedAt = DateTime.UtcNow;
@@ -36,8 +38,9 @@ public sealed class HttpApi : IDisposable
     long _streamClientsActive;
     Thread? _thread;
 
-    public HttpApi(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit, Banlist banlist, Allowlist allowlist, Scheduler scheduler, A2SQuery a2s, LogsBrowser logs)
+    public HttpApi(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit, Banlist banlist, Allowlist allowlist, Scheduler scheduler, A2SQuery a2s, LogsBrowser logs, AuthThrottle? throttle = null)
     {
+        _throttle = throttle ?? new AuthThrottle();
         _cfg = cfg;
         _server = server;
         _buffer = buffer;
@@ -153,11 +156,20 @@ public sealed class HttpApi : IDisposable
                 supplied = authz.Substring(7);
         }
         if (supplied is null && ctx.Request.QueryString["password"] is { } qp) supplied = qp;
+        var remote = ctx.Request.RemoteEndPoint?.Address;
+        if (_throttle.IsLockedOut(remote))
+        {
+            Write(ctx, 429, "application/json", "{\"error\":\"too many wrong passwords from this address; try again later\"}");
+            return;
+        }
         if (!ConstantTimeEquals(supplied ?? "", _cfg.RconPassword))
         {
+            if (_throttle.RecordFailure(remote))
+                _buffer.Append("system", $"http: {remote} locked out for {AuthThrottle.Lockout.TotalMinutes:0} minutes after {AuthThrottle.MaxFailures} wrong passwords");
             Write(ctx, 401, "application/json", "{\"error\":\"unauthorized\"}");
             return;
         }
+        _throttle.RecordSuccess(remote);
         next();
     }
 
@@ -279,15 +291,13 @@ public sealed class HttpApi : IDisposable
 
     void Chat(HttpListenerContext ctx)
     {
-        // s&box's `say` ConCommand IS the documented chat-broadcast path
-        // but the engine's command parser (Facepunch/sbox-public#2507) splits
-        // arguments at any Unicode whitespace-class char even when quoted, so a
-        // literal `say "hello world"` only delivers "hello" to the handler.
-        // U+00A0 (NBSP) was tried in v2.0.6 and also got eaten because .NET's
-        // char.IsWhiteSpace classifies all Zs-category code points as whitespace.
-        // Workaround: substitute whitespace runs with U+00B7 (middle-dot) — Unicode
-        // category Po (Punctuation/Other), guaranteed not whitespace under any
-        // tokenizer, renders as a visible word separator in the chat client.
+        // The broadcast goes through the game's `say` command. The engine's
+        // tokenizer cuts an unquoted argument at the first space, so the message
+        // is sent quoted. Quoting did not survive older builds
+        // (Facepunch/sbox-public#2507), which is why 1.3.x replaced spaces with
+        // U+00B7; on build 26.10.02 `hostname "a b c"` keeps all three words, so
+        // the message now arrives as typed. Embedded double quotes would end the
+        // argument early and become single quotes.
         if (ctx.Request.HttpMethod != "POST")
         {
             Write(ctx, 405, "application/json", "{\"error\":\"POST required\"}");
@@ -306,17 +316,38 @@ public sealed class HttpApi : IDisposable
         if (text.Length > 512) { Write(ctx, 400, "application/json", "{\"error\":\"text too long (512 char max)\"}"); return; }
         if (text.Contains('\n') || text.Contains('\r')) { Write(ctx, 400, "application/json", "{\"error\":\"text may not contain newline\"}"); return; }
 
-        string transcribed = Regex.Replace(text.Trim(), @"\s+", "·");
-        string cmd = "say " + transcribed;
+        string message = Regex.Replace(text.Trim(), @"\s+", " ").Replace('"', '\'');
+        string cmd = "say \"" + message + "\"";
+        long preSeq = _buffer.LastSeq;
         bool ok = _server.TrySendCommand(cmd);
         Interlocked.Increment(ref _executeTotal);
+        // `say` comes from the running game, not the engine, and many games have none
+        // (the stock facepunch.sandbox answers "Unknown Command 'say'"). Watch the
+        // reply briefly so a broadcast nobody received is not reported as sent.
+        bool unknown = false;
+        if (ok)
+        {
+            var deadline = DateTime.UtcNow.AddMilliseconds(ChatReplyWindowMs);
+            while (!unknown && DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(50);
+                unknown = _buffer.SinceSeq(preSeq).Any(e => e.Stream == "stdout"
+                    && e.Line.Contains("Unknown Command", StringComparison.OrdinalIgnoreCase)
+                    && e.Line.Contains("say", StringComparison.OrdinalIgnoreCase));
+            }
+        }
         _audit.Record("chat", new Dictionary<string, object?>
         {
             ["text"] = text,
             ["client_ip"] = ctx.Request.RemoteEndPoint?.Address.ToString(),
-            ["success"] = ok,
+            ["success"] = ok && !unknown,
         });
         if (!ok) { Write(ctx, 503, "application/json", "{\"error\":\"child not running\"}"); return; }
+        if (unknown)
+        {
+            Write(ctx, 422, "application/json", "{\"error\":\"the running game has no say command, so chat broadcast is not available on it\"}");
+            return;
+        }
         _buffer.Append("chat", $"Server: {text}");
         Write(ctx, 200, "application/json", "{\"ok\":true}");
     }
@@ -353,33 +384,45 @@ public sealed class HttpApi : IDisposable
             // connection before the first body byte. With SendChunked the response headers
             // do not actually go on the wire until the first Write, so a quiet server
             // (no /chat or /execute traffic) leaves the client hanging until the 15s
-            // heartbeat — which is past most browser/proxy connect-idle limits. Emit an
-            // SSE comment line and a backlog snapshot before entering the live loop so
-            // the client transitions to onopen instantly.
-            int historyCount = 0;
-            if (int.TryParse(ctx.Request.QueryString["history"], out int hc))
-                historyCount = Math.Clamp(hc, 0, _cfg.BufferSize);
+            // heartbeat, which is past most browser/proxy connect-idle limits. Emit an
+            // SSE comment line and the backlog before entering the live loop so the
+            // client transitions to onopen instantly.
+            //
+            // Backlog: ?history=N sends the last N lines. A reconnecting client that
+            // passes the last seq it saw (the Last-Event-ID header EventSource sends by
+            // itself, or ?since=<seq>) gets exactly what it missed instead.
+            List<MessageBuffer.Entry> backlog;
+            string? resume = ctx.Request.Headers["Last-Event-ID"] ?? ctx.Request.QueryString["since"];
+            if (long.TryParse(resume, out long sinceSeq) && sinceSeq >= 0)
+            {
+                backlog = _buffer.SinceSeq(sinceSeq);
+            }
+            else
+            {
+                int historyCount = 0;
+                if (int.TryParse(ctx.Request.QueryString["history"], out int hc))
+                    historyCount = Math.Clamp(hc, 0, _cfg.BufferSize);
+                backlog = historyCount > 0 ? _buffer.Tail(historyCount) : new List<MessageBuffer.Entry>();
+            }
 
+            // The channel was registered before the backlog was read, so a line can be
+            // in both. Remember where the backlog ends and skip anything at or before it.
+            long sentThrough = backlog.Count > 0 ? backlog[^1].SeqNo : 0;
             try
             {
                 var hello = Encoding.UTF8.GetBytes(": connected\n\n");
                 stream.Write(hello, 0, hello.Length);
-                stream.Flush();
-                if (historyCount > 0)
+                foreach (var e in backlog)
                 {
-                    foreach (var e in _buffer.Tail(historyCount))
-                    {
-                        var payload = $"data: {{\"seq\":{e.SeqNo},\"stream\":\"{e.Stream}\",\"line\":{JsonEncodedString(e.Line)}}}\n\n";
-                        var bytes = Encoding.UTF8.GetBytes(payload);
-                        stream.Write(bytes, 0, bytes.Length);
-                    }
-                    stream.Flush();
+                    var bytes = Encoding.UTF8.GetBytes(SseEvent(e));
+                    stream.Write(bytes, 0, bytes.Length);
                 }
+                stream.Flush();
             }
             catch { /* client gone before first byte; loop will exit on next heartbeat */ }
 
             // Async loop with cancellable WaitToReadAsync prevents abandoned waiters from accumulating.
-            StreamLoopAsync(ch, stream).GetAwaiter().GetResult();
+            StreamLoopAsync(ch, stream, sentThrough).GetAwaiter().GetResult();
         }
         finally
         {
@@ -390,7 +433,10 @@ public sealed class HttpApi : IDisposable
         }
     }
 
-    async Task StreamLoopAsync(Channel<MessageBuffer.Entry> ch, Stream stream)
+    static string SseEvent(MessageBuffer.Entry e)
+        => $"id: {e.SeqNo}\ndata: {{\"seq\":{e.SeqNo},\"stream\":\"{e.Stream}\",\"line\":{JsonEncodedString(e.Line)}}}\n\n";
+
+    async Task StreamLoopAsync(Channel<MessageBuffer.Entry> ch, Stream stream, long sentThrough)
     {
         while (!_cts.IsCancellationRequested)
         {
@@ -403,8 +449,8 @@ public sealed class HttpApi : IDisposable
                 if (!more) break;
                 while (ch.Reader.TryRead(out var e))
                 {
-                    var payload = $"data: {{\"seq\":{e.SeqNo},\"stream\":\"{e.Stream}\",\"line\":{JsonEncodedString(e.Line)}}}\n\n";
-                    var bytes = Encoding.UTF8.GetBytes(payload);
+                    if (e.SeqNo <= sentThrough) continue;
+                    var bytes = Encoding.UTF8.GetBytes(SseEvent(e));
                     await stream.WriteAsync(bytes).ConfigureAwait(false);
                     wrote = true;
                 }
@@ -412,7 +458,7 @@ public sealed class HttpApi : IDisposable
             }
             catch (OperationCanceledException) when (!_cts.IsCancellationRequested)
             {
-                // heartbeat tick — emit a comment line so dead clients are detected by write failure
+                // heartbeat tick: emit a comment line so dead clients are detected by write failure
                 try
                 {
                     var hb = Encoding.UTF8.GetBytes(": heartbeat\n\n");
@@ -433,11 +479,12 @@ public sealed class HttpApi : IDisposable
         int uptimeSec = (int)(DateTime.UtcNow - _startedAt).TotalSeconds;
         long childMem = 0;
         double childCpuSec = 0;
-        if (_server.IsAlive && _server.ChildPid > 0)
+        int serverPid = _server.IsAlive ? _server.ServerPid : 0;
+        if (serverPid > 0)
         {
             try
             {
-                using var p = System.Diagnostics.Process.GetProcessById(_server.ChildPid);
+                using var p = System.Diagnostics.Process.GetProcessById(serverPid);
                 childMem = p.WorkingSet64;
                 childCpuSec = p.TotalProcessorTime.TotalSeconds;
             }
@@ -447,6 +494,7 @@ public sealed class HttpApi : IDisposable
         var sb = new StringBuilder("{");
         sb.Append("\"child_alive\":").Append(_server.IsAlive ? "true" : "false");
         sb.Append(",\"child_pid\":").Append(_server.ChildPid);
+        sb.Append(",\"server_pid\":").Append(serverPid);
         sb.Append(",\"child_uptime_sec\":").Append((int)_server.Uptime.TotalSeconds);
         sb.Append(",\"child_memory_bytes\":").Append(childMem);
         sb.Append(",\"child_cpu_seconds\":").Append(childCpuSec.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
@@ -563,9 +611,12 @@ public sealed class HttpApi : IDisposable
                         reason = doc.RootElement.TryGetProperty("reason", out var r) ? r.GetString() : "";
                     }
                     catch (JsonException) { Write(ctx, 400, "application/json", "{\"error\":\"invalid json\"}"); return; }
-                    if (string.IsNullOrWhiteSpace(sid)) { Write(ctx, 400, "application/json", "{\"error\":\"steamid required\"}"); return; }
                     var by = ctx.Request.RemoteEndPoint?.Address.ToString() ?? "";
-                    _banlist.Add(sid!, reason ?? "", by);
+                    if (!_banlist.TryAdd(sid ?? "", reason ?? "", by, out string banErr))
+                    {
+                        Write(ctx, 400, "application/json", $"{{\"error\":{JsonEncodedString(banErr)}}}");
+                        return;
+                    }
                     Write(ctx, 200, "application/json", "{\"ok\":true}");
                     return;
                 }
@@ -619,9 +670,12 @@ public sealed class HttpApi : IDisposable
                         note = doc.RootElement.TryGetProperty("note", out var n) ? n.GetString() : "";
                     }
                     catch (JsonException) { Write(ctx, 400, "application/json", "{\"error\":\"invalid json\"}"); return; }
-                    if (string.IsNullOrWhiteSpace(sid)) { Write(ctx, 400, "application/json", "{\"error\":\"steamid required\"}"); return; }
                     var by = ctx.Request.RemoteEndPoint?.Address.ToString() ?? "";
-                    _allowlist.Add(sid!, note ?? "", by);
+                    if (!_allowlist.TryAdd(sid ?? "", note ?? "", by, out string allowErr))
+                    {
+                        Write(ctx, 400, "application/json", $"{{\"error\":{JsonEncodedString(allowErr)}}}");
+                        return;
+                    }
                     Write(ctx, 200, "application/json", "{\"ok\":true}");
                     return;
                 }
@@ -680,12 +734,12 @@ public sealed class HttpApi : IDisposable
                         command = doc.RootElement.TryGetProperty("command", out var c) ? c.GetString() : null;
                     }
                     catch (JsonException) { Write(ctx, 400, "application/json", "{\"error\":\"invalid json\"}"); return; }
-                    if (!_scheduler.TryAdd(id ?? "", schedule ?? "", command ?? "", out string err))
+                    if (!_scheduler.TryAdd(id ?? "", schedule ?? "", command ?? "", out string err, out string jobId))
                     {
                         Write(ctx, 400, "application/json", $"{{\"error\":{JsonEncodedString(err)}}}");
                         return;
                     }
-                    Write(ctx, 200, "application/json", "{\"ok\":true}");
+                    Write(ctx, 200, "application/json", $"{{\"ok\":true,\"id\":{JsonEncodedString(jobId)}}}");
                     return;
                 }
             default:

@@ -19,7 +19,7 @@ string[] BannerLines()
     return new[]
     {
         "============================================================",
-        $"  S&box Server Console v{AgentVersion()}",
+        $"  SboxServerConsole v{AgentVersion()}",
         "  Process agent + Source RCON + dashboard for s&box",
         "",
         "  Repo:     https://github.com/HumanGenome/SboxServerConsole",
@@ -63,134 +63,181 @@ if (childConsoleMirror is not null)
 // Print to process stdout for anyone watching the wrapper console (panel, RDP, service log).
 foreach (var bl in BannerLines()) WriteLocalConsoleLine(bl);
 
-var config = CliConfig.Parse(args);
-if (config is null) return 1;
+if (CliConfig.Parse(args) is not { } config) return 1;
 
-using var buffer = new MessageBuffer(config.BufferSize);
-
-// Mirror the banner into the message buffer so the same content shows up in
-// /history, /stream, the dashboard, and panel-proxied console views.
-foreach (var bl in BannerLines()) buffer.Append("agent", bl);
-buffer.Append("agent", "Starting up — please wait while sbox-server.exe launches and loads the map.");
-using var server = new ServerProcess(config, buffer, MirrorChildOutputLine);
-using var audit = new AuditLog(config.AuditLogPath);
-using var discord = new DiscordWebhook(config.DiscordWebhookUrl);
-using var banlist = new Banlist(config, server, buffer, audit, discord);
-using var allowlist = new Allowlist(config, server, buffer, audit);
-using var scheduler = new Scheduler(config, server, buffer, audit);
-using var a2s = new A2SQuery(config, buffer);
-var logs = new LogsBrowser(config.LogsDir);
-using var rcon = new RconServer(config, server, buffer, audit);
-
-var done = new ManualResetEventSlim(false);
-
-server.OnSupervisorExit += () =>
+if (config.WindowsService)
 {
-    Console.WriteLine("[SboxServerConsole] supervisor exit; shutting down");
-    audit.Record("supervisor_exit", new Dictionary<string, object?> { ["pid"] = server.ChildPid, ["last_exit_code"] = server.LastExitCode });
-    _ = discord.SendAsync(
-        "S&box server stopped",
-        $"Child process exited (last code={server.LastExitCode}). S&box Server Console shutting down.",
-        DiscordWebhook.ColorYellow);
-    done.Set();
-};
-
-try
-{
-    server.Start();
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"[SboxServerConsole] failed to start child: {ex.Message}");
-    audit.Record("child_start_failed", new Dictionary<string, object?> { ["error"] = ex.Message });
-    return 2;
-}
-
-HttpApi http;
-try
-{
-    http = new HttpApi(config, server, buffer, audit, banlist, allowlist, scheduler, a2s, logs);
-    http.Start();
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"[SboxServerConsole] failed to start HTTP listener on {config.BindAddress}:{config.ListenPort}: {ex.Message}");
-    audit.Record("http_start_failed", new Dictionary<string, object?> { ["error"] = ex.Message });
-    server.Stop(TimeSpan.FromSeconds(5));
-    return 3;
-}
-using var _http = http;
-
-scheduler.Start();
-a2s.Start();
-try { rcon.Start(); }
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"[SboxServerConsole] failed to start RCON listener on {config.BindAddress}:{config.RconPort}: {ex.Message}");
-    audit.Record("rcon_start_failed", new Dictionary<string, object?> { ["error"] = ex.Message });
-}
-
-// Status lines also go to both stdout AND the buffer so they appear in panel
-// console views (which read /history + /stream).
-void Status(string s) { WriteLocalConsoleLine($"[SboxServerConsole] {s}"); buffer.Append("agent", s); }
-
-Status($"listening on http://{config.BindAddress}:{config.ListenPort}");
-Status($"child pid={server.ChildPid} exe={config.ChildExe}");
-if (config.DashboardEnabled) Status($"dashboard:    http://{config.BindAddress}:{config.ListenPort}/");
-if (audit.Enabled) Status($"audit log: {audit.Path}");
-if (discord.Enabled) Status("Discord webhook configured");
-if (banlist.Persisted) Status($"banlist persisted to {config.BanlistPath} (connect-regex: {(banlist.ConnectRegexConfigured ? "set" : "unset")})");
-if (allowlist.Persisted) Status($"allowlist persisted to {config.AllowlistPath} (entries: {allowlist.Count}, enforced: {(allowlist.Enforced ? "yes" : "no")})");
-if (scheduler.Persisted) Status($"scheduler persisted to {config.SchedulerPath}");
-if (a2s.Enabled) Status($"A2S poller every {config.QueryPollSeconds}s on udp/{config.QueryPort}");
-if (logs.Enabled) Status($"logs browser exposing {logs.Root}");
-if (rcon.Enabled) Status($"Source RCON: tcp/{config.RconPort}");
-
-Thread? localConsoleInput = null;
-if (CanUseLocalConsoleInput())
-{
-    Status("local console input enabled; type server commands here and press Enter");
-    localConsoleInput = new Thread(() => LocalConsoleInputLoop(server, audit, done, WriteLocalConsoleLine))
+    if (!OperatingSystem.IsWindows())
     {
-        IsBackground = true,
-        Name = "local-console-input",
-    };
-    localConsoleInput.Start();
+        Console.Error.WriteLine("--windows-service only applies on Windows");
+        return 1;
+    }
+    // Started by the Windows service manager: it needs a service entry point, and
+    // a stop request from it plays the part of Ctrl-C.
+    return WindowsServiceHost.Run(RunAgent);
 }
+return RunAgent(new ManualResetEventSlim(false));
 
-audit.Record("startup", new Dictionary<string, object?>
+// The whole agent: start the server, serve the API and RCON, and supervise until
+// `done` is set (signal, Ctrl-C, service stop) or supervision ends on its own.
+int RunAgent(ManualResetEventSlim done)
 {
-    ["listen"] = $"{config.BindAddress}:{config.ListenPort}",
-    ["child_pid"] = server.ChildPid,
-    ["child_port"] = config.ChildPort,
-});
-_ = discord.SendAsync(
-    "S&box server started",
-    $"Listening on `{config.BindAddress}:{config.ListenPort}`. Child pid `{server.ChildPid}` on port `{config.ChildPort}`.",
-    DiscordWebhook.ColorGreen);
+    using var buffer = new MessageBuffer(config.BufferSize);
 
-// Shutdown signals. CancelKeyPress alone is not enough: it only fires for an
-// interactive Ctrl-C, so a SIGINT delivered by kill(1), an init system, or any
-// non-interactive context never reached it and the agent kept serving as if
-// nothing happened. PosixSignalRegistration sees the raw signal on every
-// platform. Cancel = true suppresses the runtime's default handling — for
-// SIGTERM that default is a hard exit on a ~2 s budget, which used to kill the
-// process before the child was stopped and left the game server orphaned.
-// With it cancelled, the main thread below runs the same graceful stop for
-// SIGINT and SIGTERM alike: ask the child to shut down, then kill the process
-// tree if it will not, then exit 0.
-using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; done.Set(); });
-using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; done.Set(); });
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; done.Set(); };
-AppDomain.CurrentDomain.ProcessExit += (_, _) => done.Set();
+    // Mirror the banner into the message buffer so the same content shows up in
+    // /history, /stream, the dashboard, and panel-proxied console views.
+    foreach (var bl in BannerLines()) buffer.Append("agent", bl);
+    buffer.Append("agent", "Starting the s&box server. Loading the game can take a minute.");
+    foreach (var w in config.Warnings)
+    {
+        WriteLocalConsoleLine($"[SboxServerConsole] warning: {w}");
+        buffer.Append("agent", $"warning: {w}");
+    }
+    using var server = new ServerProcess(config, buffer, MirrorChildOutputLine);
+    using var audit = new AuditLog(config.AuditLogPath);
+    using var discord = new DiscordWebhook(config.DiscordWebhookUrl, msg => buffer.Append("system", msg));
+    using var banlist = new Banlist(config, server, buffer, audit, discord);
+    using var allowlist = new Allowlist(config, server, buffer, audit);
+    using var scheduler = new Scheduler(config, server, buffer, audit);
+    using var a2s = new A2SQuery(config, buffer);
+    var logs = new LogsBrowser(config.LogsDir);
+    // One throttle for both listeners: a password guesser gets the same budget whether
+    // it knocks on the HTTP API or the RCON port.
+    var authThrottle = new AuthThrottle();
+    using var rcon = new RconServer(config, server, buffer, audit, authThrottle);
+    a2s.OnSnapshot += info => banlist.ObserveA2SPlayers(info.Players);
 
-done.Wait();
+    Task? lastDiscord = null;
 
-server.Stop(TimeSpan.FromSeconds(10));
-childConsoleMirror?.CompleteAdding();
-try { childConsoleMirrorThread?.Join(1000); } catch { }
+    server.OnSupervisorExit += () =>
+    {
+        bool gaveUp = server.GaveUp;
+        WriteLocalConsoleLine(gaveUp
+            ? "[SboxServerConsole] the server exited and will not be restarted; agent exiting"
+            : "[SboxServerConsole] supervisor exit; shutting down");
+        audit.Record("supervisor_exit", new Dictionary<string, object?>
+        {
+            ["pid"] = server.ChildPid,
+            ["last_exit_code"] = server.LastExitCode,
+            ["gave_up"] = gaveUp,
+        });
+        if (gaveUp)
+        {
+            lastDiscord = discord.SendAsync(
+                "s&box server crashed",
+                $"The server exited (code {server.LastExitCode}) and auto-restart gave up. SboxServerConsole is exiting.",
+                DiscordWebhook.ColorRed);
+        }
+        done.Set();
+    };
+    server.OnChildExited += () => banlist.ClearRoster();
 
-return 0;
+    try
+    {
+        server.Start();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[SboxServerConsole] failed to start child: {ex.Message}");
+        audit.Record("child_start_failed", new Dictionary<string, object?> { ["error"] = ex.Message });
+        return 2;
+    }
+
+    HttpApi http;
+    try
+    {
+        http = new HttpApi(config, server, buffer, audit, banlist, allowlist, scheduler, a2s, logs, authThrottle);
+        http.Start();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[SboxServerConsole] failed to start HTTP listener on {config.BindAddress}:{config.ListenPort}: {ex.Message}");
+        audit.Record("http_start_failed", new Dictionary<string, object?> { ["error"] = ex.Message });
+        server.Shutdown(TimeSpan.FromSeconds(5));
+        return 3;
+    }
+    using var _http = http;
+
+    scheduler.Start();
+    a2s.Start();
+    try { rcon.Start(); }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[SboxServerConsole] failed to start RCON listener on {config.BindAddress}:{config.RconPort}: {ex.Message}");
+        audit.Record("rcon_start_failed", new Dictionary<string, object?> { ["error"] = ex.Message });
+    }
+
+    // Status lines also go to both stdout AND the buffer so they appear in panel
+    // console views (which read /history + /stream).
+    void Status(string s) { WriteLocalConsoleLine($"[SboxServerConsole] {s}"); buffer.Append("agent", s); }
+
+    Status($"listening on http://{config.BindAddress}:{config.ListenPort}");
+    Status($"child pid={server.ChildPid} exe={config.ChildExe}");
+    if (config.DashboardEnabled) Status($"dashboard:    http://{config.BindAddress}:{config.ListenPort}/");
+    if (audit.Enabled) Status($"audit log: {audit.Path}");
+    if (discord.Enabled) Status("Discord webhook configured");
+    if (banlist.Persisted) Status($"banlist persisted to {config.BanlistPath} (connect-regex: {(banlist.ConnectRegexConfigured ? "set" : "unset")})");
+    if (allowlist.Persisted) Status($"allowlist persisted to {config.AllowlistPath} (entries: {allowlist.Count}, enforced: {(allowlist.Enforced ? "yes" : "no")})");
+    if (scheduler.Persisted) Status($"scheduler persisted to {config.SchedulerPath}");
+    if (a2s.Enabled) Status($"A2S poller every {config.QueryPollSeconds}s on udp/{config.QueryPort}");
+    if (logs.Enabled) Status($"logs browser exposing {logs.Root}");
+    if (rcon.Enabled) Status($"Source RCON: tcp/{config.RconPort}");
+
+    Thread? localConsoleInput = null;
+    if (CanUseLocalConsoleInput())
+    {
+        Status("local console input enabled; type server commands here and press Enter");
+        localConsoleInput = new Thread(() => LocalConsoleInputLoop(server, audit, done, WriteLocalConsoleLine))
+        {
+            IsBackground = true,
+            Name = "local-console-input",
+        };
+        localConsoleInput.Start();
+    }
+
+    audit.Record("startup", new Dictionary<string, object?>
+    {
+        ["listen"] = $"{config.BindAddress}:{config.ListenPort}",
+        ["child_pid"] = server.ChildPid,
+        ["child_port"] = config.ChildPort,
+    });
+    _ = discord.SendAsync(
+        "s&box server started",
+        $"Listening on `{config.BindAddress}:{config.ListenPort}`. Child pid `{server.ChildPid}` on port `{config.ChildPort}`.",
+        DiscordWebhook.ColorGreen);
+
+    // Shutdown signals. CancelKeyPress alone is not enough: it only fires for an
+    // interactive Ctrl-C, so a SIGINT delivered by kill(1), an init system, or any
+    // non-interactive context never reached it and the agent kept serving as if
+    // nothing happened. PosixSignalRegistration sees the raw signal on every
+    // platform. Cancel = true suppresses the runtime's default handling — for
+    // SIGTERM that default is a hard exit on a ~2 s budget, which used to kill the
+    // process before the child was stopped and left the game server orphaned.
+    // With it cancelled, the main thread below runs the same graceful stop for
+    // SIGINT and SIGTERM alike: ask the child to shut down, then kill the process
+    // tree if it will not, then exit 0.
+    using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; done.Set(); });
+    using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; done.Set(); });
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; done.Set(); };
+    AppDomain.CurrentDomain.ProcessExit += (_, _) => done.Set();
+
+    done.Wait();
+
+    bool supervisorGaveUp = server.GaveUp;
+    if (!supervisorGaveUp)
+    {
+        server.Shutdown(TimeSpan.FromSeconds(10));
+        lastDiscord = discord.SendAsync("s&box server stopped", "SboxServerConsole stopped the server and is exiting.", DiscordWebhook.ColorYellow);
+    }
+    // Give the last notification a moment to leave; never hold the exit hostage to it.
+    try { lastDiscord?.Wait(TimeSpan.FromSeconds(3)); } catch { }
+    childConsoleMirror?.CompleteAdding();
+    try { childConsoleMirrorThread?.Join(1000); } catch { }
+
+    // Exit codes: 0 = stopped on request (signal, Ctrl-C); 4 = the server crashed and
+    // auto-restart gave up (or is off). Service managers restart on the non-zero code.
+    return supervisorGaveUp ? 4 : 0;
+}
 
 static void ResetInheritedSignalDispositions()
 {

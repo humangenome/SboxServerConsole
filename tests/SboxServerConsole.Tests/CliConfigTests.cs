@@ -24,11 +24,39 @@ public class CliConfigTests
     }
 
     [Fact]
-    public void QueryPortFallsBackToTheChildPort()
+    public void QueryPortFallsBackToTheEngineDefault()
     {
+        // Without +net_query_port the s&box server answers A2S on 27016 whatever +port
+        // is (Networking.QueryPort; measured on build 26.10.02). Polling the game port
+        // got no answer at all.
         using var s = new Scratch();
         var cfg = Configs.Parse(s.Dir, "--child-args", "+port 13600");
-        Assert.Equal(13600, cfg.QueryPort);
+        Assert.Equal(27016, cfg.QueryPort);
+    }
+
+    [Fact]
+    public void UnknownSettingsAreReported()
+    {
+        using var s = new Scratch();
+        var cfg = Configs.Parse(s.Dir, "--rcon-pasword", "secret");
+        Assert.Contains(cfg.Warnings, w => w.Contains("rcon-pasword"));
+        Assert.Contains(cfg.Warnings, w => w.Contains("rcon-password is empty"));
+    }
+
+    [Fact]
+    public void KnownSettingsRaiseNoUnknownWarning()
+    {
+        using var s = new Scratch();
+        var cfg = Configs.Parse(s.Dir, "--rcon-password", "x", "--shutdown-command", "quit", "--rcon-disabled");
+        Assert.DoesNotContain(cfg.Warnings, w => w.Contains("unknown setting"));
+    }
+
+    [Fact]
+    public void ABrokenRegexIsReported()
+    {
+        using var s = new Scratch();
+        var cfg = Configs.Parse(s.Dir, "--connect-regex", "(unclosed");
+        Assert.Contains(cfg.Warnings, w => w.StartsWith("connect-regex is not a valid regex"));
     }
 
     [Fact]
@@ -131,5 +159,14 @@ public class CliConfigTests
         using var s = new Scratch();
         var cfg = Configs.Parse(s.Dir, "--bind", "0.0.0.0", "--bind", "127.0.0.1");
         Assert.Equal("127.0.0.1", cfg.BindAddress);
+    }
+
+    [Fact]
+    public void AnEmptyConnectRegexMeansTheDefault()
+    {
+        using var s = new Scratch();
+        var cfg = Configs.Parse(s.Dir, "--connect-regex", "", "--disconnect-regex", " ");
+        Assert.Equal(CliConfig.DefaultConnectLineRegex, cfg.ConnectLineRegex);
+        Assert.Equal(CliConfig.DefaultDisconnectLineRegex, cfg.DisconnectLineRegex);
     }
 }

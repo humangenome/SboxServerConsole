@@ -1,7 +1,7 @@
 {
-  "exe":                   "/opt/sbox-server/sbox-server.sh",
+  "exe":                   "/opt/sbox-server/sbox-server",
   "game-dir":              "/opt/sbox-server",
-  "child-args":            "+game facepunch.sandbox facepunch.flatgrass +port 27015 +net_query_port 27016 +hostname \"My S&box Server\"",
+  "child-args":            "+game facepunch.sandbox facepunch.flatgrass +port 27015 +net_query_port 27016 +hostname \"My s&box Server\"",
   "child-port":            27015,
   "listen-port":           27019,
   "rcon-port":             27020,
@@ -16,8 +16,6 @@
   "banlist":               "/var/lib/sboxconsole/banlist.json",
   "allowlist":             "/var/lib/sboxconsole/allowlist.json",
   "kick-command":          "kick {steamid}",
-  "connect-regex":         "",
-  "disconnect-regex":      "",
   "scheduler":             "/var/lib/sboxconsole/scheduler.json",
   "logs-dir":              "/var/log/sboxconsole",
   "no-auto-restart":       false,

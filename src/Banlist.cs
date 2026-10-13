@@ -1,14 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 
 namespace SboxServerConsole;
 
-// Persistent banlist with per-line regex enforcement.
+// Persistent banlist with per-line enforcement, plus the online roster.
 // Storage is a single JSON file; small enough to load and rewrite atomically.
-// When a connect-line matches, we extract the steamid; if banned we run the
-// configured kick template via stdin. Disconnect-line matches keep the
-// online roster fresh for the dashboard.
+// When a join line matches, the SteamID is checked; a banned player is kicked
+// with the configured kick template. Leave lines keep the roster fresh.
 public sealed class Banlist : IDisposable
 {
     public sealed class Ban
@@ -26,17 +24,27 @@ public sealed class Banlist : IDisposable
 
     public sealed record Player(string SteamId, string Name, DateTime SeenAt);
 
+    // How long A2S may report players with no join line seen before we say the
+    // join detection is blind.
+    static readonly TimeSpan BlindJoinGrace = TimeSpan.FromMinutes(3);
+
     readonly string? _path;
     readonly ServerProcess _server;
     readonly MessageBuffer _buffer;
     readonly AuditLog _audit;
     readonly DiscordWebhook _discord;
     readonly CliConfig _cfg;
+    readonly PlayerLineParser _parser;
     readonly object _lock = new();
     readonly Dictionary<string, Ban> _bans = new(StringComparer.Ordinal);
     readonly Dictionary<string, Player> _online = new(StringComparer.Ordinal);
-    readonly Regex? _connectRe;
-    readonly Regex? _disconnectRe;
+    long _joinsSeen;
+    DateTime? _a2sPlayersSince;
+    bool _blindWarned;
+    bool _storeBlocked;
+
+    // Test seam for the blind-join grace period.
+    internal Func<DateTime> Now { get; set; } = () => DateTime.UtcNow;
 
     public event Action<Player>? OnPlayerJoin;
     public event Action<string>? OnPlayerLeave;
@@ -48,23 +56,16 @@ public sealed class Banlist : IDisposable
         _buffer = buffer;
         _audit = audit;
         _discord = discord;
+        _parser = new PlayerLineParser(cfg);
         _path = string.IsNullOrWhiteSpace(cfg.BanlistPath) ? null : cfg.BanlistPath;
-        _connectRe = TryCompile(cfg.ConnectLineRegex);
-        _disconnectRe = TryCompile(cfg.DisconnectLineRegex);
         Load();
         _buffer.OnAppend += OnLine;
     }
 
-    static Regex? TryCompile(string pattern)
-    {
-        if (string.IsNullOrWhiteSpace(pattern)) return null;
-        try { return new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant); }
-        catch (ArgumentException) { return null; }
-    }
-
-    public bool ConnectRegexConfigured => _connectRe is not null;
-    public bool DisconnectRegexConfigured => _disconnectRe is not null;
+    public bool ConnectRegexConfigured => _parser.ConnectRegexConfigured;
+    public bool DisconnectRegexConfigured => _parser.DisconnectRegexConfigured;
     public bool Persisted => _path is not null;
+    public long JoinsSeen { get { lock (_lock) return _joinsSeen; } }
 
     public IReadOnlyList<Ban> All()
     {
@@ -76,9 +77,11 @@ public sealed class Banlist : IDisposable
         lock (_lock) return _online.Values.OrderBy(p => p.Name).ToList();
     }
 
-    public bool Add(string steamId, string reason, string by)
+    public bool Add(string steamId, string reason, string by) => TryAdd(steamId, reason, by, out _);
+
+    public bool TryAdd(string steamId, string reason, string by, out string error)
     {
-        if (string.IsNullOrWhiteSpace(steamId)) return false;
+        if (!_parser.IsUsableId(steamId, out error)) return false;
         lock (_lock)
         {
             _bans[steamId] = new Ban
@@ -121,48 +124,71 @@ public sealed class Banlist : IDisposable
         lock (_lock) return _bans.ContainsKey(steamId);
     }
 
+    // The child exited: nobody is connected any more.
+    public void ClearRoster()
+    {
+        lock (_lock)
+        {
+            _online.Clear();
+            _a2sPlayersSince = null;
+            _blindWarned = false;
+        }
+    }
+
     void OnLine(MessageBuffer.Entry e)
     {
         if (e.Stream != "stdout") return;
-        if (_connectRe is not null)
+        var r = _parser.Classify(e.Line);
+        if (r.Kind == PlayerLineParser.Kind.Join)
         {
-            var m = _connectRe.Match(e.Line);
-            if (m.Success)
+            var p = new Player(r.SteamId, r.Name, DateTime.UtcNow);
+            lock (_lock) { _online[r.SteamId] = p; _joinsSeen++; }
+            if (IsBanned(r.SteamId)) TryKick(r.SteamId);
+            else
             {
-                string sid = m.Groups["steamid"].Value;
-                string name = m.Groups["name"].Success ? m.Groups["name"].Value : "";
-                if (!string.IsNullOrEmpty(sid))
-                {
-                    var p = new Player(sid, name, DateTime.UtcNow);
-                    lock (_lock) _online[sid] = p;
-                    if (IsBanned(sid)) TryKick(sid);
-                    else
-                    {
-                        try { OnPlayerJoin?.Invoke(p); } catch { }
-                        _ = _discord.SendAsync("Player joined", $"`{(string.IsNullOrEmpty(name) ? sid : name)}` connected.", DiscordWebhook.ColorBlue);
-                    }
-                }
+                try { OnPlayerJoin?.Invoke(p); } catch { }
+                _ = _discord.SendAsync("Player joined", $"{DiscordWebhook.Quote(DisplayName(r.Name, r.SteamId))} connected.", DiscordWebhook.ColorBlue);
             }
         }
-        if (_disconnectRe is not null)
+        else if (r.Kind == PlayerLineParser.Kind.Leave)
         {
-            var m = _disconnectRe.Match(e.Line);
-            if (m.Success)
+            string? name = null;
+            bool wasOnline;
+            lock (_lock)
             {
-                string sid = m.Groups["steamid"].Value;
-                if (!string.IsNullOrEmpty(sid))
-                {
-                    string? name = null;
-                    lock (_lock)
-                    {
-                        if (_online.TryGetValue(sid, out var p)) name = p.Name;
-                        _online.Remove(sid);
-                    }
-                    try { OnPlayerLeave?.Invoke(sid); } catch { }
-                    _ = _discord.SendAsync("Player left", $"`{(string.IsNullOrEmpty(name) ? sid : name)}` disconnected.", DiscordWebhook.ColorYellow);
-                }
+                wasOnline = _online.TryGetValue(r.SteamId, out var p);
+                if (wasOnline) name = p!.Name;
+                _online.Remove(r.SteamId);
+            }
+            // Some builds print more than one line per disconnect; announce a leave once.
+            if (!wasOnline) return;
+            try { OnPlayerLeave?.Invoke(r.SteamId); } catch { }
+            _ = _discord.SendAsync("Player left", $"{DiscordWebhook.Quote(DisplayName(name, r.SteamId))} disconnected.", DiscordWebhook.ColorYellow);
+        }
+    }
+
+    static string DisplayName(string? name, string steamId) => string.IsNullOrEmpty(name) ? steamId : name;
+
+    // Called with each A2S answer. If the server reports players for a while but no
+    // join line has ever matched, the connect regex is not seeing this build's
+    // output, and the roster, bans and the allowlist are blind. Say so once.
+    public void ObserveA2SPlayers(int players)
+    {
+        string? warning = null;
+        lock (_lock)
+        {
+            if (players <= 0 || _online.Count > 0) { _a2sPlayersSince = null; return; }
+            var now = Now();
+            _a2sPlayersSince ??= now;
+            if (!_blindWarned && now - _a2sPlayersSince.Value >= BlindJoinGrace)
+            {
+                _blindWarned = true;
+                warning = $"warn: A2S reports {players} player(s) but no join line has matched --connect-regex; the player roster, bans and the allowlist cannot see who joins on this server build";
             }
         }
+        if (warning is null) return;
+        _buffer.Append("system", warning);
+        _audit.Record("join_detection_blind", new Dictionary<string, object?> { ["a2s_players"] = players });
     }
 
     void TryKick(string steamId)
@@ -213,27 +239,22 @@ public sealed class Banlist : IDisposable
         }
         catch (Exception ex)
         {
-            _buffer.Append("system", $"banlist load failed: {ex.Message}");
+            // Keep the unreadable file: the next save would otherwise overwrite every ban in it.
+            string? kept = StoreFile.SetAside(_path);
+            _bans.Clear();
+            _storeBlocked = kept is null;
+            _buffer.Append("system", $"warn: banlist {_path} could not be read ({ex.Message}); starting with no bans" +
+                (kept is null ? " and NOT saving changes, so the file is left as it is" : $", the unreadable file was kept as {kept}"));
         }
     }
 
     void Save()
     {
-        if (_path is null) return;
-        var dir = Path.GetDirectoryName(_path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        if (_path is null || _storeBlocked) return;
         var opts = new JsonSerializerOptions { WriteIndented = true };
         var data = new BanlistFile { Bans = _bans.Values.OrderBy(b => b.AddedAt).ToList() };
-        var tmp = _path + ".tmp";
-        try
-        {
-            File.WriteAllText(tmp, JsonSerializer.Serialize(data, opts));
-            File.Move(tmp, _path, overwrite: true);
-        }
-        catch (Exception ex)
-        {
-            _buffer.Append("system", $"banlist save failed: {ex.Message}");
-        }
+        try { StoreFile.WriteAtomic(_path, JsonSerializer.Serialize(data, opts)); }
+        catch (Exception ex) { _buffer.Append("system", $"banlist save failed: {ex.Message}"); }
     }
 
     public void Dispose() => _buffer.OnAppend -= OnLine;

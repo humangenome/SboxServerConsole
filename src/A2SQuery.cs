@@ -36,6 +36,13 @@ public sealed class A2SQuery : IDisposable
     InfoSnapshot? _latestInfo;
     IReadOnlyList<PlayerEntry> _latestPlayers = Array.Empty<PlayerEntry>();
     Thread? _thread;
+    // Last poll outcome, so the console gets one line when answers stop and one when
+    // they come back, not a line every poll while a server loads or sits stopped.
+    string? _lastError;
+    bool _everAnswered;
+
+    // Raised after every successful A2S_INFO answer.
+    public event Action<InfoSnapshot>? OnSnapshot;
 
     public A2SQuery(CliConfig cfg, MessageBuffer buffer)
     {
@@ -78,15 +85,39 @@ public sealed class A2SQuery : IDisposable
                     if (info is not null) _latestInfo = info;
                     _latestPlayers = players;
                 }
+                if (info is null) NoteFailure("the reply was not an A2S_INFO answer");
+                else
+                {
+                    NoteSuccess();
+                    try { OnSnapshot?.Invoke(info); } catch { }
+                }
             }
             catch (Exception ex)
             {
-                _buffer.Append("system", $"a2s poll error: {ex.Message}");
+                NoteFailure(ex.Message);
             }
 
             var deadline = DateTime.UtcNow + period;
             while (DateTime.UtcNow < deadline && !_cts.IsCancellationRequested) Thread.Sleep(250);
         }
+    }
+
+    void NoteFailure(string reason)
+    {
+        if (_lastError == reason) return;
+        _lastError = reason;
+        // Until the first answer this is usually just the server still loading.
+        _buffer.Append("system", _everAnswered
+            ? $"a2s: udp/{_cfg.QueryPort} stopped answering ({reason})"
+            : $"a2s: no answer yet on udp/{_cfg.QueryPort} ({reason}); normal while the server loads");
+    }
+
+    void NoteSuccess()
+    {
+        if (_lastError is not null || !_everAnswered)
+            _buffer.Append("system", $"a2s: udp/{_cfg.QueryPort} answering");
+        _lastError = null;
+        _everAnswered = true;
     }
 
     static byte[] BuildInfoRequest(int? challenge)

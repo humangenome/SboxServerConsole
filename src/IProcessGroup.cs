@@ -6,10 +6,14 @@ namespace SboxServerConsole;
 //   Note: this is best-effort — if the parent dies hard (SIGKILL) without
 //   running Dispose, the child is reparented to init and survives. Hosts
 //   that need true tree death on parent crash should run SboxServerConsole
-//   under systemd with KillMode=mixed (see scripts/sboxserverconsole.service).
+//   under systemd with KillMode=mixed (see examples/sboxserverconsole.service).
 public interface IProcessGroup : IDisposable
 {
     void AssignProcess(System.Diagnostics.Process p);
+
+    // Processes known to be in the group, when the platform can tell (Windows job
+    // objects can). Empty when it cannot.
+    IReadOnlyList<int> ProcessIds();
 }
 
 public static class ProcessGroup

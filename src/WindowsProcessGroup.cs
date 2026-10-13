@@ -20,6 +20,11 @@ sealed class WindowsProcessGroup : IProcessGroup
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool CloseHandle(IntPtr hObject);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool QueryInformationJobObject(IntPtr hJob, int infoClass, IntPtr lpJobObjectInfo, uint cbLength, IntPtr lpReturnLength);
+
+    const int JobObjectBasicProcessIdList = 3;
+
     const int JobObjectExtendedLimitInformation = 9;
     const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 
@@ -87,6 +92,26 @@ sealed class WindowsProcessGroup : IProcessGroup
     {
         if (!AssignProcessToJobObject(_handle, p.Handle))
             throw new InvalidOperationException("AssignProcessToJobObject failed");
+    }
+
+    // Every process in the job: the PowerShell wrapper and the server it started.
+    public IReadOnlyList<int> ProcessIds()
+    {
+        if (_handle == IntPtr.Zero) return Array.Empty<int>();
+        const int capacity = 64;
+        int size = 8 + capacity * IntPtr.Size;
+        IntPtr buf = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!QueryInformationJobObject(_handle, JobObjectBasicProcessIdList, buf, (uint)size, IntPtr.Zero))
+                return Array.Empty<int>();
+            int count = Marshal.ReadInt32(buf, 4);
+            var ids = new List<int>(count);
+            for (int i = 0; i < Math.Min(count, capacity); i++)
+                ids.Add((int)Marshal.ReadIntPtr(buf, 8 + i * IntPtr.Size));
+            return ids;
+        }
+        finally { Marshal.FreeHGlobal(buf); }
     }
 
     public void Dispose()

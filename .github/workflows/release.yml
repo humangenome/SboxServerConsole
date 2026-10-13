@@ -1,7 +1,7 @@
 name: Release
 
 # Triggered by pushing a version tag (v1.0.1, v1.1.0, etc.).
-# Master commits alone do not build a release — only tagged versions do.
+# Commits to main alone do not build a release; only tagged versions do.
 
 on:
   push:
@@ -82,6 +82,13 @@ jobs:
           cp -r examples stage/examples
           tar -czf SboxServerConsole-linux-x64.tar.gz -C stage .
 
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cp publish/win-x64/SboxServerConsole.exe publish/linux-x64/SboxServerConsole .
+          sha256sum SboxServerConsole.exe SboxServerConsole SboxServerConsole-win-x64.zip SboxServerConsole-linux-x64.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Leak gate on shipped binaries
         shell: bash
         run: |
@@ -110,6 +117,7 @@ jobs:
             publish/linux-x64/SboxServerConsole
             SboxServerConsole-win-x64.zip
             SboxServerConsole-linux-x64.tar.gz
+            SHA256SUMS
 
       - name: Extract release notes from CHANGELOG
         if: startsWith(github.ref, 'refs/tags/v')
@@ -140,10 +148,11 @@ jobs:
             echo
             echo "- Windows (x64): \`SboxServerConsole.exe\` (single file) or \`SboxServerConsole-win-x64.zip\` (binary + scripts + examples)"
             echo "- Linux (x64): \`SboxServerConsole-linux-x64.tar.gz\` (binary + examples + systemd unit)"
+            echo "- \`SHA256SUMS\` lists the SHA-256 of every file above."
             echo
             echo "## Install / Upgrade"
             echo
-            echo "Drop the binary next to your s&box dedicated server install and launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#installation). Reinstalling is safe — bans, scheduler jobs, and audit logs persist across restarts."
+            echo "Drop the binary next to your s&box dedicated server install and launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#installation). Replacing the binary keeps your bans, allowlist, scheduled jobs and audit log; they live in the files your config names."
             echo
             echo "## Official Hosting"
             echo
@@ -156,7 +165,7 @@ jobs:
         with:
           # HUMANGENOME_PAT so the release object is authored by the account,
           # not github-actions[bot]. Falls back to GITHUB_TOKEN if the secret
-          # is ever removed — the release still publishes, only the author
+          # is ever removed; the release still publishes, only the author
           # byline degrades.
           token: ${{ secrets.HUMANGENOME_PAT || secrets.GITHUB_TOKEN }}
           files: |
@@ -164,4 +173,5 @@ jobs:
             publish/linux-x64/SboxServerConsole
             SboxServerConsole-win-x64.zip
             SboxServerConsole-linux-x64.tar.gz
+            SHA256SUMS
           body_path: release_notes.md

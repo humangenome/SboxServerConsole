@@ -12,6 +12,10 @@ class SboxConsole:
         self.timeout = timeout
 
     def _req(self, method: str, path: str, body=None):
+        # POSTs always carry a body: Windows rejects an empty POST without
+        # Content-Length (411) before it reaches the agent.
+        if body is None and method == "POST":
+            body = {}
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(
             self.base + path,
@@ -53,16 +57,29 @@ class SboxConsole:
     def scheduler_list(self):
         return self._req("GET", "/scheduler")
 
-    def scheduler_add(self, job_id: str, schedule: str, command: str):
-        return self._req("POST", "/scheduler",
-                         {"id": job_id, "schedule": schedule, "command": command})
+    def scheduler_add(self, schedule: str, command: str, job_id: str = ""):
+        """Adds a job; without job_id the agent picks one and returns it as "id"."""
+        body = {"schedule": schedule, "command": command}
+        if job_id:
+            body["id"] = job_id
+        return self._req("POST", "/scheduler", body)
+
+    def list_allows(self):
+        return self._req("GET", "/allows")
+
+    def allow(self, steamid: str, note: str = ""):
+        return self._req("POST", "/allows", {"steamid": steamid, "note": note})
+
+    def restart(self):
+        return self._req("POST", "/server/restart")
 
 
 if __name__ == "__main__":
     import os
     c = SboxConsole(
         base=os.environ.get("HOST", "http://127.0.0.1:27019"),
-        password=os.environ["PWD"],
+        # Not PWD: the shell always sets that to the current directory.
+        password=os.environ["RCON_PASSWORD"],
     )
     print("health  :", c.health())
     print("status  :", c.status())

@@ -179,4 +179,23 @@ public class DocsDriftTests
         Assert.Contains("?password=", api);
         Assert.Contains("503", api);
     }
+
+    // The example configs are copied by hand into real installs, so every key must
+    // be one the parser reads, and the join regexes must not be blanked out (an
+    // empty connect-regex in an old example turned bans off for whoever copied it).
+    [Theory]
+    [InlineData("examples.config.example.json")]
+    [InlineData("examples.config.linux.example.json")]
+    public void ExampleConfigsOnlyUseRealKeys(string resource)
+    {
+        var known = ConfigKeysInSource();
+        using var doc = JsonDocument.Parse(Res.Read(resource));
+        var unknown = doc.RootElement.EnumerateObject().Select(p => p.Name).Where(k => !known.Contains(k)).ToList();
+        Assert.True(unknown.Count == 0, resource + " has keys the parser ignores: " + string.Join(", ", unknown));
+        foreach (var key in new[] { "connect-regex", "disconnect-regex" })
+        {
+            if (doc.RootElement.TryGetProperty(key, out var v))
+                Assert.False(string.IsNullOrWhiteSpace(v.GetString()), $"{resource} sets {key} to an empty string");
+        }
+    }
 }

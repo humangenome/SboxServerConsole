@@ -123,6 +123,8 @@ sealed class ApiHost : IDisposable
         Logs = new LogsBrowser(Config.LogsDir);
         Rcon = new RconServer(Config, Server, Buffer, Audit);
         Api = new HttpApi(Config, Server, Buffer, Audit, Banlist, Allowlist, Scheduler, A2s, Logs);
+        // Same wiring as Program.cs.
+        Server.OnChildExited += () => Banlist.ClearRoster();
         BaseUrl = $"http://127.0.0.1:{Config.ListenPort}";
     }
 

@@ -25,10 +25,16 @@
 
   <ItemGroup>
     <PackageReference Include="Cronos" Version="0.8.4" />
+    <!-- ServiceBase, for running under the Windows service manager (Windows only). -->
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="web/index.html" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SboxServerConsole.Tests" />
   </ItemGroup>
 
   <ItemGroup>

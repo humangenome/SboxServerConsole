@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace SboxServerConsole;
 
@@ -32,6 +33,20 @@ public sealed class CliConfig
     public required int RestartMaxAttempts { get; init; }
     public required int RestartWindowSeconds { get; init; }
     public required string LogsDir { get; init; }
+    public required bool WindowsService { get; init; }
+
+    // Problems worth saying out loud at startup: unknown keys (a typo silently
+    // ignored is how an RCON password or a banlist path goes missing) and regexes
+    // that do not compile.
+    public List<string> Warnings { get; } = new();
+
+    // The engine's own default when +net_query_port is not on the command line.
+    public const int SboxDefaultQueryPort = 27016;
+
+    public const string DefaultConnectLineRegex =
+        @"(?:^\d{1,2}:\d{2}:\d{2}\s+\S+\s+(?<name>.+?)|\b(?<name>\S+))\s+\[(?<steamid>\d{17})\]\s+is\s+connecting\b";
+    public const string DefaultDisconnectLineRegex =
+        @"\[(?<steamid>\d{17})\]\s+disconnected\b|SteamIdSocket\s*-\s*steamid:\d+:\s*Disconnection\s*\((?<steamid>\d{17})\)|SteamIdSocket\s*-\s*steamid:(?<steamid>\d{17}):\s*Disconnection";
 
     public static CliConfig? Parse(string[] args)
     {
@@ -82,7 +97,7 @@ public sealed class CliConfig
                 return null;
             }
             string key = a[2..];
-            if (key == "dashboard-disabled" || key == "no-auto-restart" || key == "rcon-disabled")
+            if (key == "dashboard-disabled" || key == "no-auto-restart" || key == "rcon-disabled" || key == "windows-service")
             {
                 raw[key] = "true";
                 continue;
@@ -95,9 +110,10 @@ public sealed class CliConfig
             raw[key] = args[++i];
         }
 
-        string Get(string key, string fallback) => raw.TryGetValue(key, out var v) ? v : fallback;
-        int GetInt(string key, int fallback) => raw.TryGetValue(key, out var v) && int.TryParse(v, out int n) ? n : fallback;
-        bool GetBool(string key, bool fallback) => raw.TryGetValue(key, out var v) && bool.TryParse(v, out bool b) ? b : fallback;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "child-port", "listen-port", "rcon-port", "query-port" };
+        string Get(string key, string fallback) { seen.Add(key); return raw.TryGetValue(key, out var v) ? v : fallback; }
+        int GetInt(string key, int fallback) { seen.Add(key); return raw.TryGetValue(key, out var v) && int.TryParse(v, out int n) ? n : fallback; }
+        bool GetBool(string key, bool fallback) { seen.Add(key); return raw.TryGetValue(key, out var v) && bool.TryParse(v, out bool b) ? b : fallback; }
 
         string exe = Get("exe", "");
         string gameDir = Get("game-dir", "");
@@ -118,18 +134,22 @@ public sealed class CliConfig
         string allowlistPath = Get("allowlist", "");
         string schedulerPath = Get("scheduler", "");
         string kickCommandTemplate = Get("kick-command", "kick {steamid}");
-        // sbox-server.exe stdout shapes (verified live against a running server):
-        //   "01:20:36 Generic  Joe [76561198966650247] is connecting"   - connect
-        //   "01:21:25 Generic  Joe [76561198966650247] is connected"    - connect (post-handshake)
-        //   "SteamIdSocket - steamid:N: Disconnection (N)"              - disconnect
-        // sbox prefixes stdout with "HH:MM:SS Category  " so the connect regex must NOT
-        // be ^-anchored. \b on the name capture keeps spurious matches out of garbled lines.
-        // Disconnect alternates: SteamID64 in parens (preferred) OR colon-prefix network id.
-        // Override with --connect-regex/--disconnect-regex if a future sbox build drifts.
-        string connectLineRegex = Get("connect-regex",
-            @"\b(?<name>\S+)\s+\[(?<steamid>\d{17})\]\s+is\s+connecting\b");
-        string disconnectLineRegex = Get("disconnect-regex",
-            @"SteamIdSocket\s*-\s*steamid:\d+:\s*Disconnection\s*\((?<steamid>\d{17})\)|SteamIdSocket\s*-\s*steamid:(?<steamid>\d{17}):\s*Disconnection");
+        // s&box server output shapes (engine source, NetworkSystem.Handshake.cs and
+        // NetworkSystem.Connections.cs, checked against build 26.10.02):
+        //   "01:20:36 Generic  Joe Bloggs [76561198966650247] is connecting"  - connect
+        //   "01:21:25 Generic  Joe Bloggs [76561198966650247] disconnected"   - disconnect
+        //   "SteamIdSocket - steamid:N: Disconnection (N)"                    - disconnect, older builds
+        // The connect regex takes the whole name after the "HH:MM:SS Category  "
+        // prefix, and falls back to the last word when the prefix is missing. Lines
+        // are matched right to left (see PlayerLineParser), so a player name that
+        // contains "[<another SteamID>] is connecting" cannot stand in for the real one.
+        // Override with --connect-regex/--disconnect-regex if a future build drifts.
+        // Empty means "use the default", not "switch join detection off": an empty
+        // value copied from an old example config silently disabled bans for everyone.
+        string connectLineRegex = Get("connect-regex", "");
+        if (string.IsNullOrWhiteSpace(connectLineRegex)) connectLineRegex = DefaultConnectLineRegex;
+        string disconnectLineRegex = Get("disconnect-regex", "");
+        if (string.IsNullOrWhiteSpace(disconnectLineRegex)) disconnectLineRegex = DefaultDisconnectLineRegex;
         // Frame-stats, running-status header, and startup resource-reload spam are pure noise.
         // sbox concatenates them into one logical line through the ConPTY stream:
         //   "<hostname> (n/max) [h:mm:ss]   <padding>   Physics F.FFms, ... Network F.FFms"
@@ -147,6 +167,7 @@ public sealed class CliConfig
         int restartMaxAttempts = Math.Clamp(GetInt("restart-max-attempts", 5), 1, 100);
         int restartWindowSeconds = Math.Clamp(GetInt("restart-window-sec", 600), 60, 86400);
         string logsDir = Get("logs-dir", "");
+        bool windowsService = GetBool("windows-service", false);
 
         if (string.IsNullOrEmpty(exe) || string.IsNullOrEmpty(gameDir))
         {
@@ -173,9 +194,11 @@ public sealed class CliConfig
         }
         listenPort ??= childPort.Value + 4;
         rconPort ??= childPort.Value + 5;
-        queryPort ??= TryExtractNetQueryPort(childArgs) ?? childPort.Value;
+        // Without +net_query_port the engine answers A2S on its own default port, not
+        // on the game port.
+        queryPort ??= TryExtractNetQueryPort(childArgs) ?? SboxDefaultQueryPort;
 
-        return new CliConfig
+        var config = new CliConfig
         {
             ChildExe = exe,
             GameDir = gameDir,
@@ -205,7 +228,27 @@ public sealed class CliConfig
             RestartMaxAttempts = restartMaxAttempts,
             RestartWindowSeconds = restartWindowSeconds,
             LogsDir = logsDir,
+            WindowsService = windowsService,
         };
+
+        foreach (var key in raw.Keys)
+        {
+            if (!seen.Contains(key))
+                config.Warnings.Add($"unknown setting \"{key}\" was ignored (check the spelling; settings are kebab-case, like rcon-password)");
+        }
+        CheckRegex(config.Warnings, "connect-regex", connectLineRegex, "the player roster, bans and the allowlist will not see joins");
+        CheckRegex(config.Warnings, "disconnect-regex", disconnectLineRegex, "the player roster will not see players leave");
+        CheckRegex(config.Warnings, "suppress-regex", suppressLineRegex, "no output lines will be suppressed");
+        if (string.IsNullOrEmpty(rconPassword))
+            config.Warnings.Add("rcon-password is empty: the HTTP API answers 503 on every authenticated route and Source RCON stays off");
+        return config;
+    }
+
+    static void CheckRegex(List<string> warnings, string key, string pattern, string consequence)
+    {
+        if (string.IsNullOrWhiteSpace(pattern)) return;
+        try { _ = new Regex(pattern, RegexOptions.CultureInvariant); }
+        catch (ArgumentException ex) { warnings.Add($"{key} is not a valid regex ({ex.Message}); {consequence}"); }
     }
 
     static int? TryExtractPort(string args)
@@ -238,7 +281,7 @@ public sealed class CliConfig
               --child-port <int>        inferred from +port in --child-args if omitted
               --listen-port <int>       HTTP API port (default child-port + 4)
               --rcon-port <int>         Source RCON TCP port (default child-port + 5)
-              --query-port <int>        sbox A2S UDP port; inferred from +net_query_port
+              --query-port <int>        sbox A2S UDP port; inferred from +net_query_port, else 27016
               --query-poll-sec <n>      A2S poll interval; 0=disabled (default 30)
               --bind <addr>             listen address (default 127.0.0.1; use 0.0.0.0 for LAN)
               --rcon-password <str>     required for /execute, /stream, /history (any non-empty)
@@ -252,9 +295,9 @@ public sealed class CliConfig
                                         on connect. Empty allowlist disables enforcement (open server).
               --kick-command <tpl>      template for kick command, {steamid} placeholder (default "kick {steamid}")
               --connect-regex <re>      regex with named (?<steamid>...) capture; banlist enforced when matches
-                                        default matches sbox "<name> [STEAMID64] is connecting"
+                                        default matches s&box "<name> [STEAMID64] is connecting"
               --disconnect-regex <re>   regex with named (?<steamid>...) capture
-                                        default matches sbox "SteamIdSocket - steamid:N: Disconnection"
+                                        default matches s&box "<name> [STEAMID64] disconnected"
               --suppress-regex <re>     drop matching stdout lines BEFORE buffer/stream/dashboard
                                         default suppresses sbox per-frame stats, status header, and reload spam
                                         (pass empty string to disable suppression)
@@ -265,6 +308,7 @@ public sealed class CliConfig
               --restart-max-attempts <n>  cap restarts inside window (default 5)
               --restart-window-sec <n>  window for max-attempts cap (default 600)
               --dashboard-disabled      do not serve the / dashboard page
+              --windows-service         run under the Windows service manager (set by scripts/install-service.ps1)
               --help                    print this help
             """);
     }

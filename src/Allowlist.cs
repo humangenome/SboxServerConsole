@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 
 namespace SboxServerConsole;
 
@@ -30,7 +29,8 @@ public sealed class Allowlist : IDisposable
     readonly CliConfig _cfg;
     readonly object _lock = new();
     readonly Dictionary<string, Entry> _allow = new(StringComparer.Ordinal);
-    readonly Regex? _connectRe;
+    readonly PlayerLineParser _parser;
+    bool _storeBlocked;
 
     public Allowlist(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit)
     {
@@ -39,16 +39,9 @@ public sealed class Allowlist : IDisposable
         _buffer = buffer;
         _audit = audit;
         _path = string.IsNullOrWhiteSpace(cfg.AllowlistPath) ? null : cfg.AllowlistPath;
-        _connectRe = TryCompile(cfg.ConnectLineRegex);
+        _parser = new PlayerLineParser(cfg);
         Load();
         _buffer.OnAppend += OnLine;
-    }
-
-    static Regex? TryCompile(string pattern)
-    {
-        if (string.IsNullOrWhiteSpace(pattern)) return null;
-        try { return new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant); }
-        catch (ArgumentException) { return null; }
     }
 
     public bool Persisted => _path is not null;
@@ -60,9 +53,11 @@ public sealed class Allowlist : IDisposable
         lock (_lock) return _allow.Values.OrderBy(b => b.AddedAt).ToList();
     }
 
-    public bool Add(string steamId, string note, string by)
+    public bool Add(string steamId, string note, string by) => TryAdd(steamId, note, by, out _);
+
+    public bool TryAdd(string steamId, string note, string by, out string error)
     {
-        if (string.IsNullOrWhiteSpace(steamId)) return false;
+        if (!_parser.IsUsableId(steamId, out error)) return false;
         lock (_lock)
         {
             _allow[steamId] = new Entry
@@ -106,14 +101,11 @@ public sealed class Allowlist : IDisposable
     void OnLine(MessageBuffer.Entry e)
     {
         if (e.Stream != "stdout") return;
-        if (_connectRe is null) return;
-        // Fast path: allowlist disabled (empty) → never enforce.
+        // Fast path: allowlist disabled (empty) means never enforce.
         if (!Enforced) return;
-        var m = _connectRe.Match(e.Line);
-        if (!m.Success) return;
-        string sid = m.Groups["steamid"].Value;
-        if (string.IsNullOrEmpty(sid)) return;
-        if (!IsAllowed(sid)) TryKick(sid, "not on allowlist");
+        var r = _parser.Classify(e.Line);
+        if (r.Kind != PlayerLineParser.Kind.Join) return;
+        if (!IsAllowed(r.SteamId)) TryKick(r.SteamId, "not on allowlist");
     }
 
     void TryKick(string steamId, string reason)
@@ -160,23 +152,22 @@ public sealed class Allowlist : IDisposable
         }
         catch (Exception ex)
         {
-            _buffer.Append("system", $"allowlist load failed: {ex.Message}");
+            // Keep the unreadable file. An allowlist that silently became empty would
+            // also open a private server to everyone, so say that plainly.
+            string? kept = StoreFile.SetAside(_path);
+            _allow.Clear();
+            _storeBlocked = kept is null;
+            _buffer.Append("system", $"warn: allowlist {_path} could not be read ({ex.Message}); the allowlist is EMPTY, so the server is open to everyone" +
+                (kept is null ? ", and changes are NOT saved so the file is left as it is" : $"; the unreadable file was kept as {kept}"));
         }
     }
 
     void Save()
     {
-        if (_path is null) return;
-        var dir = Path.GetDirectoryName(_path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        if (_path is null || _storeBlocked) return;
         var opts = new JsonSerializerOptions { WriteIndented = true };
         var data = new AllowlistFile { Allow = _allow.Values.OrderBy(b => b.AddedAt).ToList() };
-        var tmp = _path + ".tmp";
-        try
-        {
-            File.WriteAllText(tmp, JsonSerializer.Serialize(data, opts));
-            File.Move(tmp, _path, overwrite: true);
-        }
+        try { StoreFile.WriteAtomic(_path, JsonSerializer.Serialize(data, opts)); }
         catch (Exception ex)
         {
             _buffer.Append("system", $"allowlist save failed: {ex.Message}");

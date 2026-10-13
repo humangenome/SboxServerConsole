@@ -9,7 +9,7 @@
 <style>
   :root { color-scheme: dark; --bg:#1a1a1f; --panel:#22232a; --border:#2c2d36; --fg:#e8e8ec; --mute:#8a8d99; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --ipt:#15161b; }
   * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); }
+  body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif; background:var(--bg); color:var(--fg); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
   header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; background:var(--panel); }
   header .brand { width:20px; height:20px; flex:0 0 20px; display:block; margin-right:-6px; }
   header h1 { font-size:14px; margin:0; font-weight:600; }
@@ -17,11 +17,13 @@
   header .ok { color:var(--ok); border-color:var(--ok); }
   header .bad { color:var(--bad); border-color:var(--bad); }
   header .right { margin-left:auto; display:flex; align-items:center; gap:10px; }
-  input[type=password], input[type=text] { background:var(--ipt); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:5px 8px; font:inherit; }
+  input[type=password], input[type=text], input:not([type]) { background:var(--ipt); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:5px 8px; font:inherit; }
   button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:5px 12px; cursor:pointer; font:inherit; }
   button.ghost { background:transparent; color:var(--fg); border:1px solid var(--border); }
   button:disabled { opacity:.45; cursor:not-allowed; }
-  main { display:grid; grid-template-columns: 1fr 320px; gap:0; height: calc(100vh - 44px); }
+  /* Header and command bar keep their height; the console takes the rest, so the
+     command bar never falls below the window. */
+  main { display:grid; grid-template-columns: 1fr 320px; gap:0; flex:1; min-height:0; }
   #console { background:#0e0f13; padding:8px 12px; overflow-y:auto; font:12px/1.4 ui-monospace,Menlo,Consolas,monospace; }
   #console .ln { white-space:pre-wrap; word-break:break-word; }
   #console .ln.input  { color:#67e8f9; }
@@ -53,7 +55,7 @@
 <header>
   <svg class="brand" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="248" fill="#1D5FD8"/><circle cx="256" cy="256" r="228" fill="#2A75FA"/><path fill="none" stroke="#fff" stroke-width="74" stroke-linecap="round" stroke-linejoin="round" d="M136 150l132 106-132 106"/><rect x="338" y="160" width="84" height="192" rx="12" fill="#fff"/></svg>
   <h1>SboxServerConsole</h1>
-  <span id="pill-child" class="pill">child: ?</span>
+  <span id="pill-child" class="pill">server: ?</span>
   <span id="pill-uptime" class="pill">uptime: ?</span>
   <span id="pill-stream" class="pill">stream: idle</span>
   <div class="right">
@@ -67,6 +69,7 @@
     <div class="tabs">
       <button data-tab="players" class="active">Players</button>
       <button data-tab="bans">Bans</button>
+      <button data-tab="allows">Allowlist</button>
       <button data-tab="scheduler">Scheduler</button>
     </div>
     <div class="panel active" id="tab-players">
@@ -75,15 +78,24 @@
     <div class="panel" id="tab-bans">
       <div id="bans-list"></div>
       <form class="add" id="ban-add">
-        <input name="steamid" placeholder="steamid" required>
+        <input name="steamid" placeholder="SteamID64 (17 digits)" required>
         <input name="reason" placeholder="reason (optional)">
         <button type="submit">Add ban</button>
+      </form>
+    </div>
+    <div class="panel" id="tab-allows">
+      <div id="allows-state" class="meta" style="padding:8px 0 4px;"></div>
+      <div id="allows-list"></div>
+      <form class="add" id="allow-add">
+        <input name="steamid" placeholder="SteamID64 (17 digits)" required>
+        <input name="note" placeholder="note (optional)">
+        <button type="submit">Allow</button>
       </form>
     </div>
     <div class="panel" id="tab-scheduler">
       <div id="scheduler-list"></div>
       <form class="add" id="sched-add">
-        <input name="id" placeholder="job id" required>
+        <input name="id" placeholder="job id (optional)">
         <input name="schedule" placeholder='schedule  (e.g. "@every 30m"  or  "0 */4 * * *")' required>
         <input name="command" placeholder="command (sent verbatim)" required>
         <button type="submit">Add job</button>
@@ -93,7 +105,7 @@
   </aside>
 </main>
 <footer>
-  <input id="cmd" placeholder='type a command, press enter (eg. "say hello")' autocomplete="off">
+  <input id="cmd" placeholder='type a command, press Enter (for example "status")' autocomplete="off">
   <button id="send">Send</button>
 </footer>
 <script>
@@ -167,17 +179,18 @@
   async function refreshHealth() {
     try {
       const h = await getJson("/status");
-      pillChild.textContent = `child: ${h.child_alive ? "alive" : "dead"} (pid ${h.child_pid})`;
+      pillChild.textContent = h.child_alive ? `server: running (pid ${h.child_pid})` : "server: stopped";
       pillChild.classList.toggle("ok", !!h.child_alive);
       pillChild.classList.toggle("bad", !h.child_alive);
-      const s = h.uptime_sec;
-      pillUptime.textContent = `uptime: ${formatUptime(s)}`;
+      pillUptime.textContent = h.child_alive ? `uptime: ${formatUptime(h.child_uptime_sec)}` : "uptime: -";
+      renderMetrics(h);
     } catch (e) {
-      pillChild.textContent = "child: ?";
+      pillChild.textContent = "server: ?";
       pillChild.classList.remove("ok"); pillChild.classList.add("bad");
     }
   }
   function formatUptime(s) {
+    if (!(s >= 0)) return "-";
     if (s < 60) return `${s}s`;
     if (s < 3600) return `${Math.floor(s/60)}m`;
     if (s < 86400) return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
@@ -187,7 +200,18 @@
     const list = $("#players-list");
     try {
       const data = await getJson("/players");
-      if (!data.players?.length) { list.innerHTML = '<div class="empty">no players online</div>'; return; }
+      if (!data.players?.length) {
+        // The A2S roster carries names but no SteamIDs, so it gets no kick/ban buttons.
+        const a2s = data.a2s_players || [];
+        if (!a2s.length) { list.innerHTML = '<div class="empty">no players online</div>'; return; }
+        list.innerHTML = "";
+        for (const p of a2s) {
+          const row = document.createElement("div"); row.className = "row";
+          row.innerHTML = `<div class="name">${escapeHtml(p.name || "(unnamed)")}<div class="meta">from A2S, no SteamID · ${formatUptime(Math.round(p.duration_sec || 0))}</div></div>`;
+          list.appendChild(row);
+        }
+        return;
+      }
       list.innerHTML = "";
       for (const p of data.players) {
         const row = document.createElement("div"); row.className = "row";
@@ -212,6 +236,24 @@
       }
     } catch (e) { list.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
   }
+  async function refreshAllows() {
+    const list = $("#allows-list");
+    const state = $("#allows-state");
+    try {
+      const data = await getJson("/allows");
+      state.textContent = data.enforced
+        ? "Enforced: anyone not listed is kicked when they join."
+        : "Empty: the server is open to everyone. Add a SteamID to start enforcing.";
+      if (!data.allow?.length) { list.innerHTML = ""; return; }
+      list.innerHTML = "";
+      for (const a of data.allow) {
+        const row = document.createElement("div"); row.className = "row";
+        row.innerHTML = `<div class="name">${escapeHtml(a.steamid)}<div class="meta">${escapeHtml(a.note || "(no note)")} · ${escapeHtml(a.added_at?.slice(0,19) || "")}</div></div>
+                         <button class="del" data-unallow="${escapeHtml(a.steamid)}">remove</button>`;
+        list.appendChild(row);
+      }
+    } catch (e) { list.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+  }
   async function refreshScheduler() {
     const list = $("#scheduler-list");
     try {
@@ -228,15 +270,14 @@
       }
     } catch (e) { list.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
   }
-  async function refreshMetrics() {
-    try {
-      const m = await getJson("/metrics");
-      metricsEl.innerHTML = `
-        <div><b>execute</b> ok ${m.execute.success} / fail ${m.execute.failure} / auth-deny ${m.execute.auth_failure}</div>
-        <div><b>stream</b> active ${m.stream.clients_active} / total ${m.stream.clients_total}</div>
-        <div><b>requests</b> hist ${m.requests.history} · status ${m.requests.status} · health ${m.requests.health}</div>
-      `;
-    } catch (e) { metricsEl.textContent = ""; }
+  function renderMetrics(h) {
+    const mb = (h.child_memory_bytes || 0) / 1048576;
+    const srv = h.server;
+    metricsEl.innerHTML = `
+      <div><b>server</b> ${srv ? `${escapeHtml(srv.name)} · ${srv.players}/${srv.max_players} players${srv.map ? " · " + escapeHtml(srv.map) : ""}` : "no A2S answer yet"}</div>
+      <div><b>process</b> ${h.child_alive ? `${mb.toFixed(0)} MB · ${escapeHtml(String(h.child_cpu_seconds))} CPU s` : "stopped"}</div>
+      <div><b>agent</b> up ${formatUptime(h.sidecar_uptime_sec)} · ${h.execute_total} commands · ${h.stream_clients_active} live viewer(s)</div>
+    `;
   }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
 
@@ -257,8 +298,8 @@
     await refreshHealth();
     await refreshPlayers();
     await refreshBans();
+    await refreshAllows();
     await refreshScheduler();
-    await refreshMetrics();
     connected = true;
   });
 
@@ -282,9 +323,13 @@
       const reason = prompt(`reason for banning ${t.dataset.ban}?`, "") || "";
       const r = await postJson("/bans", { steamid: t.dataset.ban, reason });
       if (r.ok) { await refreshBans(); await refreshPlayers(); }
+      else alert("ban failed: " + (r.body.error || r.status));
     } else if (t.dataset.unban) {
       const r = await delJson(`/bans/${encodeURIComponent(t.dataset.unban)}`);
       if (r.ok) await refreshBans();
+    } else if (t.dataset.unallow) {
+      const r = await delJson(`/allows/${encodeURIComponent(t.dataset.unallow)}`);
+      if (r.ok) await refreshAllows();
     } else if (t.dataset.toggle) {
       const on = t.dataset.state === "true";
       await postJson(`/scheduler/${encodeURIComponent(t.dataset.toggle)}/${on ? "disable" : "enable"}`, {});
@@ -298,8 +343,16 @@
   document.getElementById("ban-add").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
-    const r = await postJson("/bans", { steamid: f.steamid.value, reason: f.reason.value });
+    const r = await postJson("/bans", { steamid: f.steamid.value.trim(), reason: f.reason.value });
     if (r.ok) { f.reset(); await refreshBans(); }
+    else alert("ban failed: " + (r.body.error || r.status));
+  });
+  document.getElementById("allow-add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const r = await postJson("/allows", { steamid: f.steamid.value.trim(), note: f.note.value });
+    if (r.ok) { f.reset(); await refreshAllows(); }
+    else alert("allowlist add failed: " + (r.body.error || r.status));
   });
   document.getElementById("sched-add").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -311,7 +364,7 @@
     else alert("error: " + JSON.stringify(r.body));
   });
 
-  setInterval(() => { if (connected) { refreshHealth(); refreshPlayers(); refreshBans(); refreshScheduler(); refreshMetrics(); } }, 5000);
+  setInterval(() => { if (connected) { refreshHealth(); refreshPlayers(); refreshBans(); refreshAllows(); refreshScheduler(); } }, 5000);
 
   if (pwd) $("#connect").click();
 })();

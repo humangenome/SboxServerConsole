@@ -31,6 +31,8 @@
     <EmbeddedResource Include="../../src/CliConfig.cs" LogicalName="src.CliConfig.cs" />
     <EmbeddedResource Include="../../docs/api.md" LogicalName="docs.api.md" />
     <EmbeddedResource Include="../../README.md" LogicalName="README.md" />
+    <EmbeddedResource Include="../../examples/config.example.json" LogicalName="examples.config.example.json" />
+    <EmbeddedResource Include="../../examples/config.linux.example.json" LogicalName="examples.config.linux.example.json" />
   </ItemGroup>
 
 </Project>

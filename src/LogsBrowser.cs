@@ -34,7 +34,7 @@ public sealed class LogsBrowser
         {
             var dir = new DirectoryInfo(_root);
             return dir.GetFiles()
-                .Where(f => !f.Attributes.HasFlag(FileAttributes.Hidden))
+                .Where(f => IsServable(f.Name, f.Attributes))
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .Select(f => new LogFile(f.Name, f.Length, f.LastWriteTimeUtc))
                 .ToList();
@@ -49,17 +49,26 @@ public sealed class LogsBrowser
         if (string.IsNullOrWhiteSpace(requestedName)) return false;
         if (requestedName.Contains('/') || requestedName.Contains('\\')) return false;
         if (requestedName.Contains("..")) return false;
+        if (requestedName.StartsWith('.')) return false;
         try
         {
             var candidate = Path.GetFullPath(Path.Combine(_root, requestedName));
             // Defense in depth: confirm resolved path is still under root.
             if (!candidate.StartsWith(_root, StringComparison.OrdinalIgnoreCase)) return false;
             if (!File.Exists(candidate)) return false;
+            if (!IsServable(Path.GetFileName(candidate), File.GetAttributes(candidate))) return false;
             fullPath = candidate;
             return true;
         }
         catch { return false; }
     }
+
+    // Hidden files and dot-files are never listed or served, on any platform. When
+    // --logs-dir points at the server folder they include the agent's own config,
+    // which holds the RCON password, and token files. Windows reports dot-files as
+    // ordinary files, so the name check matters there.
+    static bool IsServable(string name, FileAttributes attributes)
+        => !name.StartsWith('.') && !attributes.HasFlag(FileAttributes.Hidden);
 
     public string TailToString(string fullPath, int tailLines)
     {

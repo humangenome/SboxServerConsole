@@ -5,7 +5,7 @@ namespace SboxServerConsole;
 
 // POSIX best-effort process-tree cleanup. .NET 8's
 // Process.Kill(entireProcessTree:true) walks /proc on Linux to find children
-// and kills them with SIGTERM. macOS uses pgrep equivalents under the hood.
+// and kills them (SIGKILL). macOS uses pgrep equivalents under the hood.
 //
 // Limitation: only fires on graceful Dispose. If the wrapper itself is killed
 // with SIGKILL the child is reparented to init/PID 1 and keeps running. For
@@ -22,6 +22,9 @@ sealed class PosixProcessGroup : IProcessGroup
     // disposes it as soon as the assignment returns, and a disposed Process throws
     // on every member — which silently turned this whole cleanup into a no-op.
     public void AssignProcess(Process p) => _pid = p.Id;
+
+    // On Linux the child is exec'd into the server itself, so its pid is the server's.
+    public IReadOnlyList<int> ProcessIds() => _pid > 0 ? new[] { _pid } : Array.Empty<int>();
 
     public void Dispose()
     {

@@ -17,6 +17,11 @@ public sealed class PseudoConsoleHost : IServerHost
 {
     public IntPtr ChildProcessHandle { get; private set; } = IntPtr.Zero;
     public uint ChildProcessId { get; private set; }
+    public string LineTerminator => "\r\n";
+    // ConPTY is a real console host: it answers terminal queries and renders the
+    // screen itself, so the agent only reads its output.
+    public bool EmulatesTerminal => false;
+    public string? FallbackReason => null;
     public Stream OutputStream { get; private set; } = null!;
     public Stream InputStream  { get; private set; } = null!;
 

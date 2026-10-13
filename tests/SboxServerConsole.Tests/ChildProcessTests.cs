@@ -87,22 +87,22 @@ public class ChildProcessTests : IDisposable
     }
 
     [Fact]
-    public async Task ChatSubstitutesWhitespaceWithMiddleDot()
+    public async Task ChatSendsTheMessageQuoted()
     {
-        // s&box's command tokenizer splits at any Unicode whitespace even inside
-        // quotes, so "say hello world" would only deliver "hello". Whitespace runs
-        // are replaced with U+00B7 before the command goes to the child.
+        // The engine's tokenizer cuts an unquoted argument at the first space, so the
+        // message goes out as one quoted argument (verified on s&box 26.10.02 with
+        // `hostname "a b c"`). Embedded double quotes become single quotes.
         using var h = Host();
         if (h is null) return;
 
-        var (status, _) = await h.Call("POST", "/chat", json: JsonSerializer.Serialize(new { text = "hello   world  again" }));
+        var (status, _) = await h.Call("POST", "/chat", json: JsonSerializer.Serialize(new { text = "hello   world \"again\"" }));
         Assert.Equal(200, status);
 
-        Assert.True(Wait.For(() => h.Buffer.Tail(100).Any(e => e.Stream == "input" && e.Line == "say hello·world·again")),
-            "expected the middle-dot transcription on the wire");
+        Assert.True(Wait.For(() => h.Buffer.Tail(100).Any(e => e.Stream == "input" && e.Line == "say \"hello world 'again'\"")),
+            "expected one quoted argument on the wire");
 
         // The buffer keeps the human-readable original for the console view.
-        Assert.Contains(h.Buffer.Tail(100), e => e.Stream == "chat" && e.Line == "Server: hello   world  again");
+        Assert.Contains(h.Buffer.Tail(100), e => e.Stream == "chat" && e.Line == "Server: hello   world \"again\"");
     }
 
     [Fact]
