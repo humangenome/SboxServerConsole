@@ -14,7 +14,7 @@ Everything your s&box dedicated server is missing: Source RCON, a live web conso
 
 _SboxServerConsole is a community project and is not affiliated with or endorsed by Facepunch Studios._
 
-> **Managed hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=readme&utm_campaign=sbox_server_console) runs s&box servers with SboxServerConsole already installed.
+> **[Rent an s&box server](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=readme&utm_campaign=sbox_server_console)**. Survival Servers game servers come with SboxServerConsole already installed.
 
 ---
 
