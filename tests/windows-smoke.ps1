@@ -19,7 +19,16 @@ $headers = @{ 'X-RCON-Password' = 'ci-password' }
 $failures = 0
 
 function Check($ok, $what) {
-    if ($ok) { Write-Host "PASS  $what" } else { Write-Host "FAIL  $what"; $script:failures++ }
+    if ($ok) { Write-Host "PASS  $what" } else { Write-Host "FAIL  $what"; $script:failures++; Show-History }
+}
+# On a failure, show what the agent and the child printed, so a CI run says why.
+function Show-History {
+    if ($script:historyShown) { return }
+    $script:historyShown = $true
+    try {
+        $h = Invoke-RestMethod "$base/history?count=40" -Headers $headers -TimeoutSec 5
+        foreach ($e in $h.entries) { Write-Host ("      [{0}] {1}" -f $e.stream, $e.line) }
+    } catch { Write-Host "      (history unavailable: $($_.Exception.Message))" }
 }
 function Get-Health { try { Invoke-RestMethod "$base/health" -TimeoutSec 5 } catch { $null } }
 function Post($path, $body = '{}') {

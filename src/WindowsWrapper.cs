@@ -14,12 +14,16 @@ public static class WindowsWrapper
     public const string ExeVariable = "SSC_CHILD_EXE";
     public const string ArgsVariable = "SSC_CHILD_ARGS";
 
+    // Only .NET calls, no cmdlets: a cmdlet makes PowerShell load its module from
+    // PSModulePath, and an agent started from PowerShell 7 hands Windows PowerShell a
+    // PSModulePath it cannot load those modules from.
     public const string Script = """
         $ErrorActionPreference = 'Stop'
-        $exe = $env:SSC_CHILD_EXE
-        $argLine = $env:SSC_CHILD_ARGS
-        Remove-Item Env:SSC_CHILD_EXE, Env:SSC_CHILD_ARGS -ErrorAction SilentlyContinue
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $exe = [Environment]::GetEnvironmentVariable('SSC_CHILD_EXE')
+        $argLine = [Environment]::GetEnvironmentVariable('SSC_CHILD_ARGS')
+        [Environment]::SetEnvironmentVariable('SSC_CHILD_EXE', $null)
+        [Environment]::SetEnvironmentVariable('SSC_CHILD_ARGS', $null)
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $psi.FileName = $exe
         $psi.Arguments = $argLine
         $psi.UseShellExecute = $false
