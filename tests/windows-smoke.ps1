@@ -66,8 +66,11 @@ $config | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
 $agent = Start-Process -FilePath $Exe -ArgumentList @('--config-file', "`"$configPath`"") -PassThru -WindowStyle Hidden
 try {
     Check (Wait-Until { (Get-Health).child_alive -eq $true }) 'agent serves /health with the child running'
+    $null = Wait-Until { (Cmd-Children).Count -gt 0 } 15
     $childLine = @(Cmd-Children | ForEach-Object { $_.CommandLine }) -join ' '
-    Check ($childLine -like "*ssc-smoke-child `$(New-Item -ItemType File -Path $marker1) ; New-Item*") 'the child receives its arguments exactly as written'
+    $argsOk = $childLine -like "*ssc-smoke-child `$(New-Item -ItemType File -Path $marker1) ; New-Item*"
+    if (-not $argsOk) { Write-Host "      child command line: $childLine" }
+    Check $argsOk 'the child receives its arguments exactly as written'
     Check (-not (Test-Path $marker1) -and -not (Test-Path $marker2)) 'nothing in the arguments runs as PowerShell'
 
     $r = Post '/execute?collect=1&wait_ms=2000' '{"cmd":"echo ci-marker-4711"}'
