@@ -275,7 +275,7 @@ public sealed class CliConfig
             Required:
               --game-dir <path>         server install/working directory
               --exe <path>              path to sbox-server.exe
-              --child-args "<string>"   args passed verbatim to child
+              --child-args "<string>"   server arguments; double quotes group words
             Optional:
               --config-file <path>      JSON file of kebab-case keys; CLI flags override
               --child-port <int>        inferred from +port in --child-args if omitted

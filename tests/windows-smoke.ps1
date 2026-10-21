@@ -32,10 +32,15 @@ function Wait-Until([scriptblock] $cond, [int] $seconds = 30) {
 }
 function Cmd-Children { @(Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" | Where-Object { $_.CommandLine -like '*ssc-smoke-child*' }) }
 
+# The child's arguments carry PowerShell that would create these files if anything read them as script;
+# they must reach the stand-in exactly as written instead.
+$marker1 = Join-Path $work 'ps-ran-1.txt'
+$marker2 = Join-Path $work 'ps-ran-2.txt'
+
 $config = @{
     'exe'              = "$env:SystemRoot\System32\cmd.exe"
     'game-dir'         = $work
-    'child-args'       = '/q /k title ssc-smoke-child'
+    'child-args'       = "/q /k title ssc-smoke-child `$(New-Item -ItemType File -Path $marker1) ; New-Item -ItemType File -Path $marker2"
     'child-port'       = 27015
     'listen-port'      = $port
     'rcon-port'        = 27020
@@ -52,6 +57,9 @@ $config | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
 $agent = Start-Process -FilePath $Exe -ArgumentList @('--config-file', "`"$configPath`"") -PassThru -WindowStyle Hidden
 try {
     Check (Wait-Until { (Get-Health).child_alive -eq $true }) 'agent serves /health with the child running'
+    $childLine = @(Cmd-Children | ForEach-Object { $_.CommandLine }) -join ' '
+    Check ($childLine -like "*ssc-smoke-child `$(New-Item -ItemType File -Path $marker1) ; New-Item*") 'the child receives its arguments exactly as written'
+    Check (-not (Test-Path $marker1) -and -not (Test-Path $marker2)) 'nothing in the arguments runs as PowerShell'
 
     $r = Post '/execute?collect=1&wait_ms=2000' '{"cmd":"echo ci-marker-4711"}'
     Check ([bool]($r.output | Where-Object { $_.stream -eq 'stdout' -and $_.line -match 'ci-marker-4711' })) 'a command reaches the child through ConPTY and its output comes back'

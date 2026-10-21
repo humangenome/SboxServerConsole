@@ -33,7 +33,8 @@ public sealed class PseudoConsoleHost : IServerHost
     IntPtr _attrList = IntPtr.Zero;
     bool _disposed;
 
-    public void Start(string exe, string args, string workingDir)
+    public void Start(string exe, IReadOnlyList<string> args, string workingDir,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         if (!CreatePipe(out _hPipeOutRead, out _hPipeOutWrite, IntPtr.Zero, 0))
             throw new InvalidOperationException($"CreatePipe(out) failed err={Marshal.GetLastWin32Error()}");
@@ -64,14 +65,29 @@ public sealed class PseudoConsoleHost : IServerHost
             throw new InvalidOperationException($"UpdateProcThreadAttribute err={Marshal.GetLastWin32Error()}");
         si.lpAttributeList = _attrList;
 
-        string cmdLine = $"\"{exe}\" {args}";
+        // The argument list is quoted for the C runtime's parser, so the child reads
+        // back exactly these arguments (ChildArguments.JoinForWindows).
+        string cmdLine = args.Count == 0
+            ? $"\"{exe}\""
+            : $"\"{exe}\" {ChildArguments.JoinForWindows(args)}";
+        IntPtr envBlock = environment is null ? IntPtr.Zero : BuildEnvironmentBlock(environment);
         var pi = new PROCESS_INFORMATION();
-        bool ok = CreateProcessW(
-            null, cmdLine, IntPtr.Zero, IntPtr.Zero, false,
-            EXTENDED_STARTUPINFO_PRESENT,
-            IntPtr.Zero, workingDir, ref si, out pi);
+        bool ok;
+        int err;
+        try
+        {
+            ok = CreateProcessW(
+                null, cmdLine, IntPtr.Zero, IntPtr.Zero, false,
+                EXTENDED_STARTUPINFO_PRESENT | (envBlock != IntPtr.Zero ? CREATE_UNICODE_ENVIRONMENT : 0),
+                envBlock, workingDir, ref si, out pi);
+            err = Marshal.GetLastWin32Error();
+        }
+        finally
+        {
+            if (envBlock != IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
+        }
         if (!ok)
-            throw new InvalidOperationException($"CreateProcessW err={Marshal.GetLastWin32Error()}");
+            throw new InvalidOperationException($"CreateProcessW err={err}");
 
         ChildProcessHandle = pi.hProcess;
         ChildProcessId = pi.dwProcessId;
@@ -80,6 +96,24 @@ public sealed class PseudoConsoleHost : IServerHost
         // Wrap remaining pipe ends in FileStream so callers can read/write naturally.
         OutputStream = new FileStream(_hPipeOutRead, FileAccess.Read, 4096, isAsync: false);
         InputStream  = new FileStream(_hPipeInWrite, FileAccess.Write, 4096, isAsync: false);
+    }
+
+    // The agent's own environment with these variables set on top, as the sorted,
+    // double-NUL-terminated UTF-16 block CreateProcessW takes.
+    static IntPtr BuildEnvironmentBlock(IReadOnlyDictionary<string, string> extra)
+    {
+        var vars = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables())
+        {
+            var key = e.Key as string;
+            if (string.IsNullOrEmpty(key) || key.Contains('=')) continue;
+            vars[key] = e.Value as string ?? "";
+        }
+        foreach (var kv in extra) vars[kv.Key] = kv.Value;
+        var sb = new System.Text.StringBuilder();
+        foreach (var kv in vars) sb.Append(kv.Key).Append('=').Append(kv.Value).Append('\0');
+        sb.Append('\0');
+        return Marshal.StringToHGlobalUni(sb.ToString());
     }
 
     public bool HasChildExited()
@@ -107,6 +141,7 @@ public sealed class PseudoConsoleHost : IServerHost
 
     // -------- P/Invoke --------
     const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
     [StructLayout(LayoutKind.Sequential)] public struct COORD { public short X; public short Y; }

@@ -4,6 +4,13 @@ All notable changes to SboxServerConsole are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-10-21
+
+### Changed
+
+- **Launch arguments are passed as a list.** SboxServerConsole now splits `child-args` itself: spaces separate arguments, double quotes group words, and every other character reaches the server exactly as written. Shell syntax in `child-args` (single quotes, `$VARIABLES`, backslash escapes) is no longer interpreted, so write values the way the server should receive them; if you used single quotes on Linux, switch to double quotes. The usual `+hostname "My Server" +port 27015` works as before.
+- The Windows smoke test now checks that the server receives its arguments exactly as written.
+
 ## [1.4.0] - 2026-10-12
 
 Checked against the s&box dedicated server build of 2026-10-02 (26.10.02) on Windows and Linux.

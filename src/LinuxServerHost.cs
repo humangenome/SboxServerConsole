@@ -18,11 +18,12 @@ namespace SboxServerConsole;
 // the cursor-position queries the console sends (ESC[6n). Without those answers
 // the console's own redraw swallows typed input.
 //
-// The child is spawned through /bin/sh -c 'exec <exe> <args> 0<>"$SSC_PTY" 1>&0 2>&0':
+// The child is spawned through /bin/sh -c 'exec "$0" "$@" 0<>"$SSC_PTY" 1>&0 2>&0' <exe> <args...>:
 //   - exec replaces the shell with the server, so the PID we hold is the server's
 //     and Process.Kill(entireProcessTree:true) reaches the right tree
-//   - sh re-tokenizes <args>, so --child-args keeps shell-style quoting
-//     (+hostname "My Server" stays one token)
+//   - the program and its arguments arrive as positional parameters, so the shell
+//     only sets up the redirections and never reads them (ChildArguments splits
+//     --child-args before this)
 //   - stdin, stdout and stderr all point at the PTY slave, so one stream carries
 //     everything, matching the ConPTY contract on Windows
 //
@@ -50,7 +51,8 @@ public sealed class LinuxServerHost : IServerHost
     // Set when the PTY could not be opened; ServerProcess reports it once.
     public string? FallbackReason { get; private set; }
 
-    public void Start(string exe, string args, string workingDir)
+    public void Start(string exe, IReadOnlyList<string> args, string workingDir,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         if (string.IsNullOrEmpty(exe))
             throw new ArgumentException("exe is required", nameof(exe));
@@ -66,11 +68,8 @@ public sealed class LinuxServerHost : IServerHost
             FallbackReason = "pseudo-terminal support is Linux-only";
         }
 
-        // Single-quote-wrap the exe path so shell metachars in the path itself
-        // (rare, but possible: spaces, $, &, !) survive the sh -c re-parse.
-        string script = _pty is not null
-            ? $"exec {ShellSingleQuote(exe)} {args} 0<>\"$SSC_PTY\" 1>&0 2>&0"
-            : $"exec {ShellSingleQuote(exe)} {args} 2>&1";
+        // The script is fixed text: the program is $0 and its arguments are "$@".
+        string run = _pty is not null ? PtyScript : PipeScript;
 
         _proc = new Process
         {
@@ -87,7 +86,13 @@ public sealed class LinuxServerHost : IServerHost
             EnableRaisingEvents = true,
         };
         _proc.StartInfo.ArgumentList.Add("-c");
-        _proc.StartInfo.ArgumentList.Add(script);
+        _proc.StartInfo.ArgumentList.Add(run);
+        _proc.StartInfo.ArgumentList.Add(exe);
+        foreach (var arg in args) _proc.StartInfo.ArgumentList.Add(arg);
+        if (environment is not null)
+        {
+            foreach (var kv in environment) _proc.StartInfo.Environment[kv.Key] = kv.Value;
+        }
         if (_pty is not null)
         {
             _proc.StartInfo.Environment["SSC_PTY"] = slavePath!;
@@ -122,7 +127,8 @@ public sealed class LinuxServerHost : IServerHost
         }
     }
 
-    static string ShellSingleQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
+    internal const string PtyScript = "exec \"$0\" \"$@\" 0<>\"$SSC_PTY\" 1>&0 2>&0";
+    internal const string PipeScript = "exec \"$0\" \"$@\" 2>&1";
 
     public bool HasChildExited()
     {

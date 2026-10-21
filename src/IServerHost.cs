@@ -13,9 +13,12 @@ namespace SboxServerConsole;
 //             can be opened.
 public interface IServerHost : IDisposable
 {
-    // Spawn the child. Returns when the OS reports the process is running;
-    // any startup race is the implementation's problem, not the caller's.
-    void Start(string exe, string args, string workingDir);
+    // Spawn the child with this argument list (never re-read by a shell) and,
+    // optionally, extra environment variables on top of the agent's own. Returns
+    // when the OS reports the process is running; any startup race is the
+    // implementation's problem, not the caller's.
+    void Start(string exe, IReadOnlyList<string> args, string workingDir,
+        IReadOnlyDictionary<string, string>? environment = null);
 
     // Combined stdout + stderr from the child. Read returns 0 when the child
     // exits and the OS closes the pipe.

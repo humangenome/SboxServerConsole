@@ -174,31 +174,25 @@ public sealed class ServerProcess : IDisposable
             _childCts = new CancellationTokenSource();
 
             string spawnExe;
-            string spawnArgs;
+            IReadOnlyList<string> spawnArgs;
+            IReadOnlyDictionary<string, string>? spawnEnv = null;
             string wrapperLabel;
+            // --child-args is split once, here (ChildArguments), and handed on as a list.
+            var childArgs = ChildArguments.Split(_cfg.ChildArgs);
 
             if (OperatingSystem.IsWindows())
             {
                 _host = new PseudoConsoleHost();
-                // Wrap actual server in PowerShell so it gets a real Windows console
-                // (sbox-server.exe doesn't bind directly to a ConPTY host).
                 var psExe = $@"{Environment.GetFolderPath(Environment.SpecialFolder.System)}\WindowsPowerShell\v1.0\powershell.exe";
                 if (!File.Exists(psExe)) psExe = "powershell.exe";
-                var psCmd = $"& \"{_cfg.ChildExe}\" {_cfg.ChildArgs}";
-                // Pass the script via -EncodedCommand (UTF-16 LE base64) so PowerShell
-                // never has to parse it through CreateProcess argv quoting. Any byte —
-                // including & ( ) ; | $ ` and embedded double quotes from --child-args
-                // values like +hostname "Foo & Bar" — survives verbatim.
-                var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(psCmd));
-                spawnExe = psExe;
-                spawnArgs = $"-NoProfile -NoLogo -EncodedCommand {encoded}";
+                (spawnExe, spawnArgs, spawnEnv) = WindowsWrapper.Build(psExe, _cfg.ChildExe, childArgs);
                 wrapperLabel = "powershell";
             }
             else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             {
                 _host = new LinuxServerHost();
                 spawnExe = _cfg.ChildExe;
-                spawnArgs = _cfg.ChildArgs;
+                spawnArgs = childArgs;
                 wrapperLabel = "sh";
             }
             else
@@ -207,7 +201,7 @@ public sealed class ServerProcess : IDisposable
                     $"unsupported platform; only Windows, Linux, and macOS are wired today");
             }
 
-            _host.Start(spawnExe, spawnArgs, _cfg.GameDir);
+            _host.Start(spawnExe, spawnArgs, _cfg.GameDir, spawnEnv);
             _childStartedAt = DateTime.UtcNow;
             if (_host.EmulatesTerminal) wrapperLabel = "pty";
             _buffer.Append("system", initial
