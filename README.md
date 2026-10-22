@@ -38,40 +38,40 @@ _SboxServerConsole is a community project and is not affiliated with or endorsed
 Open the dashboard in a browser and you get the server's console as it happens, a command line, the online players with kick and ban buttons, bans, the allowlist, scheduled commands and the server's memory, CPU and player count. It is a single page built into the program, with no extra files and no internet access needed.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard-1.4.0.png" alt="SboxServerConsole dashboard: live console, ban list and server status" width="860">
+  <img src="docs/screenshots/dashboard-1.4.1.png" alt="SboxServerConsole dashboard on a running s&amp;box server: the live console after the status command, the Players tab and the server, process and agent status" width="860">
 </p>
-
-### 🔌 Source RCON
-
-The s&box dedicated server has no RCON. SboxServerConsole adds a standard Source RCON port, so any Source RCON client, such as [mcrcon](https://github.com/Tiiffi/mcrcon) or [rcon-cli](https://github.com/itzg/rcon-cli), can run console commands and read the replies.
-
-```bash
-mcrcon -H your-host -P 27020 -p YourPassword "status"
-```
 
 ### 🚫 Bans and allowlist, enforced on join
 
 The agent watches the server's own join lines and kicks a banned SteamID the moment it connects. Fill the allowlist and only the players on it can stay; leave it empty and the server is open. Both lists are plain JSON files that survive restarts, and a file that cannot be read is set aside rather than overwritten.
 
+<p align="center">
+  <img src="docs/screenshots/bans-1.4.1.png" alt="The dashboard's Bans tab with two banned SteamIDs, their reasons and unban buttons" width="400">
+  <img src="docs/screenshots/allows-1.4.1.png" alt="The dashboard's Allowlist tab, enforced, with two allowed SteamIDs and their notes" width="400">
+</p>
+
 ### ⏰ Scheduled commands
 
 Run any console command on a timer (`@every 30m`) or on a cron schedule (`0 4 * * *`, in UTC). Jobs are saved to disk and keep running across restarts.
 
-### ♻️ Crash restarts
-
-If the server exits on its own, the agent starts it again after a short wait, up to a limit inside a time window so a server that crashes on boot does not loop forever. When it gives up, it exits with code 4 so systemd or a Windows service can take over. Restarts you ask for never count against that limit.
+<p align="center">
+  <img src="docs/screenshots/scheduler-1.4.1.png" alt="The dashboard's Scheduler tab with an every-30-minutes job and a nightly cron job, each with its next run" width="400">
+</p>
 
 ### 📊 Server status
 
 The agent asks the server for its name, player count and player list over the standard A2S query, reads the server process's memory and CPU time, and keeps its own roster of who joined with their SteamIDs. If A2S reports players but no join line has ever matched, it says so, because then bans cannot see joins either.
 
-### 📝 Audit log and Discord
+<p align="center">
+  <img src="docs/screenshots/status-1.4.1.png" alt="The dashboard's status lines: server name and player count from A2S, the process's memory and CPU time, and the agent's uptime" width="400">
+</p>
 
-Every command, RCON login, ban change, scheduled run and restart goes into an append-only JSON-lines audit log that rotates at 10 MB. Point it at a Discord webhook and joins, leaves, starts and crashes are posted to your channel.
+### Also built in
 
-### 🧰 HTTP API
-
-Everything the dashboard does is a plain HTTP call with JSON in and out, including a live Server-Sent Events console feed that picks up where it left off after a reconnect. The full reference is in [`docs/api.md`](docs/api.md).
+- **Source RCON:** the s&box dedicated server has no RCON. SboxServerConsole adds a standard Source RCON port, so any Source RCON client, such as [mcrcon](https://github.com/Tiiffi/mcrcon) or [rcon-cli](https://github.com/itzg/rcon-cli), can run console commands and read the replies.
+- **Crash restarts:** if the server exits on its own, the agent starts it again after a short wait, up to a limit inside a time window so a server that crashes on boot does not loop forever. When it gives up, it exits with code 4 so systemd or a Windows service can take over. Restarts you ask for never count against that limit.
+- **Audit log and Discord:** every command, RCON login, ban change, scheduled run and restart goes into an append-only JSON-lines audit log that rotates at 10 MB. Point it at a Discord webhook and joins, leaves, starts and crashes are posted to your channel.
+- **HTTP API:** everything the dashboard does is a plain HTTP call with JSON in and out, including a live Server-Sent Events console feed that picks up where it left off after a reconnect. The full reference is in [`docs/api.md`](docs/api.md).
 
 ---
 
@@ -145,7 +145,7 @@ Every `--flag` also works as a key in the JSON config file; flags on the command
 ## Using SboxServerConsole
 
 - **Dashboard:** open `http://127.0.0.1:<listen-port>/` (the game port + 4 by default) and enter the RCON password. Use `127.0.0.1`, not `localhost`: the listener only answers the address it was bound to.
-- **RCON:** connect any Source RCON client to the game port + 5.
+- **RCON:** connect any Source RCON client to the game port + 5, for example `mcrcon -H your-host -P 27020 -p YourPassword "status"`.
 - **Terminal:** when you start the agent in a terminal, the same window shows the server's console and takes commands.
 - **Scripts:** see [`examples/curl.sh`](examples/curl.sh) for a curl tour and [`examples/python_client.py`](examples/python_client.py) for a small Python client.
 
