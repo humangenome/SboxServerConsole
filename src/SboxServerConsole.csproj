@@ -2,14 +2,14 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>SboxServerConsole</RootNamespace>
     <AssemblyName>SboxServerConsole</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>1.4.1</Version>
+    <Version>1.5.0</Version>
     <Authors>HumanGenome</Authors>
     <Description>Cross-platform process agent for the s&amp;box dedicated server. Source RCON TCP listener, HTTP+SSE console, A2S player tracking, banlist + allowlist enforcement, scheduled commands, lifecycle control, auto-restart, audit log, Discord notifications, web dashboard. Windows + Linux.</Description>
     <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
@@ -26,7 +26,7 @@
   <ItemGroup>
     <PackageReference Include="Cronos" Version="0.8.4" />
     <!-- ServiceBase, for running under the Windows service manager (Windows only). -->
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>

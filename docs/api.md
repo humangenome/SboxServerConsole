@@ -3,8 +3,10 @@
 All paths are relative to `http://<bind>:<listen-port>/`.
 
 Auth: send either `X-RCON-Password: <pwd>` or `Authorization: Bearer <pwd>` on
-every authenticated route. For browser `EventSource` (`/stream`), which cannot
-set headers, pass `?password=<pwd>` instead.
+every authenticated route. A client that cannot set headers (a browser
+`EventSource` on `/stream`) may pass `?password=<pwd>` instead, but the address
+then carries the password into proxy logs and browser history; the bundled
+dashboard reads `/stream` with `fetch` and the header.
 
 If `--rcon-password` is empty, every authenticated route answers `503`: the
 password is the only credential the agent has, so there is nothing to check
@@ -84,7 +86,8 @@ stopped.
 ### `POST /execute[?collect=1]`
 
 Body: `{"cmd": "status"}`. `cmd` <= 1024 chars, no line breaks or other
-control characters (they would reach the server's console as keystrokes).
+control characters (they would reach the server's console as keystrokes); such
+a command is refused with `400`.
 
 Without `collect`:
 
@@ -105,7 +108,7 @@ With `collect=1`: returns lines that arrived in the next 250 ms.
 ### `POST /chat`
 
 Body: `{"text": "server restarting in 5 minutes"}`. `text` <= 512 chars,
-no newlines.
+no newlines or other control characters (`400`).
 
 Sends the text with the game's `say` command and appends a `stream:"chat"`
 entry on success:
@@ -255,7 +258,7 @@ config holding the RCON password.
 | Code | Meaning |
 |------|---------|
 | 200 | OK |
-| 400 | Bad request (invalid JSON, missing field, malformed regex) |
+| 400 | Bad request (invalid JSON, missing field, malformed regex, a command or chat text with a line break or control character) |
 | 401 | Bad/missing password |
 | 404 | Path or resource not found; dashboard or logs browser disabled |
 | 405 | Wrong HTTP method |

@@ -162,7 +162,7 @@ public sealed class HttpApi : IDisposable
             Write(ctx, 429, "application/json", "{\"error\":\"too many wrong passwords from this address; try again later\"}");
             return;
         }
-        if (!ConstantTimeEquals(supplied ?? "", _cfg.RconPassword))
+        if (!PasswordCheck.Matches(supplied, _cfg.RconPassword))
         {
             if (_throttle.RecordFailure(remote))
                 _buffer.Append("system", $"http: {remote} locked out for {AuthThrottle.Lockout.TotalMinutes:0} minutes after {AuthThrottle.MaxFailures} wrong passwords");
@@ -217,22 +217,8 @@ public sealed class HttpApi : IDisposable
             Write(ctx, 405, "application/json", "{\"error\":\"POST required\"}");
             return;
         }
-        if (ctx.Request.ContentLength64 > MaxBodyBytes)
-        {
-            Write(ctx, 413, "application/json", "{\"error\":\"body too large\"}");
-            return;
-        }
-        var raw = new byte[MaxBodyBytes + 1];
-        int total = 0;
-        var input = ctx.Request.InputStream;
-        while (total <= MaxBodyBytes)
-        {
-            int n = input.Read(raw, total, raw.Length - total);
-            if (n <= 0) break;
-            total += n;
-        }
-        if (total > MaxBodyBytes) { Write(ctx, 413, "application/json", "{\"error\":\"body too large\"}"); return; }
-        string body = Encoding.UTF8.GetString(raw, 0, total);
+        var body = ReadBody(ctx);
+        if (body is null) return;
         string? cmd;
         try
         {
@@ -242,7 +228,10 @@ public sealed class HttpApi : IDisposable
         catch (JsonException) { Write(ctx, 400, "application/json", "{\"error\":\"invalid json\"}"); return; }
         if (string.IsNullOrWhiteSpace(cmd)) { Write(ctx, 400, "application/json", "{\"error\":\"cmd required\"}"); return; }
         if (cmd.Length > 1024) { Write(ctx, 400, "application/json", "{\"error\":\"cmd too long\"}"); return; }
-        if (cmd.Contains('\n') || cmd.Contains('\r')) { Write(ctx, 400, "application/json", "{\"error\":\"cmd may not contain newline\"}"); return; }
+        // Line breaks and other control characters would reach the server console as
+        // keystrokes; TrySendCommand refuses them, and the caller gets a clear 400 here
+        // instead of a 503 that reads as "the server is down".
+        if (!ServerProcess.IsSendableCommand(cmd)) { Write(ctx, 400, "application/json", "{\"error\":\"cmd may not contain line breaks or control characters\"}"); return; }
 
         bool collect = ctx.Request.QueryString["collect"] is { } cv
             && (cv == "1" || cv.Equals("true", StringComparison.OrdinalIgnoreCase));
@@ -318,6 +307,7 @@ public sealed class HttpApi : IDisposable
 
         string message = Regex.Replace(text.Trim(), @"\s+", " ").Replace('"', '\'');
         string cmd = "say \"" + message + "\"";
+        if (!ServerProcess.IsSendableCommand(cmd)) { Write(ctx, 400, "application/json", "{\"error\":\"text may not contain control characters\"}"); return; }
         long preSeq = _buffer.LastSeq;
         bool ok = _server.TrySendCommand(cmd);
         Interlocked.Increment(ref _executeTotal);
@@ -879,13 +869,5 @@ public sealed class HttpApi : IDisposable
         ctx.Response.ContentLength64 = bytes.Length;
         ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
         ctx.Response.OutputStream.Close();
-    }
-
-    static bool ConstantTimeEquals(string a, string b)
-    {
-        if (a.Length != b.Length) return false;
-        int diff = 0;
-        for (int i = 0; i < a.Length; i++) diff |= a[i] ^ b[i];
-        return diff == 0;
     }
 }

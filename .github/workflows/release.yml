@@ -21,9 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Assert the tag matches the assembly version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -68,9 +68,11 @@ jobs:
           mkdir -p stage
 
           # Windows zip: SboxServerConsole.exe + README/LICENSE + service installer scripts
+          # (only the two install scripts: scripts/ also holds the maintainers' release checker)
           cp publish/win-x64/SboxServerConsole.exe stage/
           cp README.md LICENSE stage/
-          cp -r scripts stage/scripts
+          mkdir -p stage/scripts
+          cp scripts/install-service.ps1 scripts/uninstall-service.ps1 stage/scripts/
           cp -r examples stage/examples
           (cd stage && zip -r ../SboxServerConsole-win-x64.zip .)
           rm -rf stage/* stage/.[!.]* 2>/dev/null || true
@@ -119,8 +121,38 @@ jobs:
             SboxServerConsole-linux-x64.tar.gz
             SHA256SUMS
 
+
+  # The exact exe this release will publish, run on Windows (ConPTY, the job object,
+  # HTTP.sys, the service path) before anything is published.
+  windows-smoke:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: SboxServerConsole
+          path: .
+
+      - name: Smoke test (console and service)
+        timeout-minutes: 10
+        shell: pwsh
+        run: ./tests/windows-smoke.ps1 -Exe publish/win-x64/SboxServerConsole.exe
+
+  publish:
+    needs: [build, windows-smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: SboxServerConsole
+          path: .
+
       - name: Extract release notes from CHANGELOG
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
           set -euo pipefail
@@ -160,7 +192,6 @@ jobs:
           } > release_notes.md
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           # HUMANGENOME_PAT so the release object is authored by the account,

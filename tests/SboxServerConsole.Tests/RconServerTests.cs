@@ -237,4 +237,27 @@ public class RconServerTests
         Assert.Equal(9, id);
         Assert.Equal("", body);
     }
+
+    // A long reply goes out in pieces of at most 4096 bytes. A cut at a fixed byte offset
+    // split accented and emoji names in two and the client saw replacement characters.
+    [Fact]
+    public void LongRepliesAreSplitOnCharacterBoundaries()
+    {
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < 900; i++) sb.Append("Jos\u00e9 \U0001F600 [76561198000000000]\n");
+        string text = sb.ToString();
+        foreach (int max in new[] { 4096, 4095, 4094, 4093, 7 })
+        {
+            var parts = RconServer.SplitUtf8(text, max);
+            Assert.True(parts.Count > 1);
+            Assert.All(parts, p =>
+            {
+                Assert.True(System.Text.Encoding.UTF8.GetByteCount(p) <= max);
+                Assert.DoesNotContain('\uFFFD', p);
+            });
+            Assert.Equal(text, string.Concat(parts));
+        }
+        Assert.Equal(new[] { "abc" }, RconServer.SplitUtf8("abc", 4096));
+        Assert.Empty(RconServer.SplitUtf8("", 4096));
+    }
 }

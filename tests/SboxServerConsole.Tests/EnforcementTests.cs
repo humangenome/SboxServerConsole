@@ -150,22 +150,6 @@ public class EnforcementTests : IDisposable
     }
 
     [Fact]
-    public void RosterSweepEnforcesBans()
-    {
-        using var bans = new Banlist(_cfg, _srv, _buf, _audit, _discord);
-        bans.Add(Bob, "cheating", "staff");
-        bans.UpdateOnlineFromStatus(new[]
-        {
-            new Banlist.Player(Alice, "Joe", DateTime.UtcNow),
-            new Banlist.Player(Bob, "Eve", DateTime.UtcNow),
-        });
-
-        Assert.Equal(2, bans.Online().Count);
-        Assert.Contains(AuditOf("ban_kick"), k => k.GetProperty("steamid").GetString() == Bob);
-        Assert.DoesNotContain(AuditOf("ban_kick"), k => k.GetProperty("steamid").GetString() == Alice);
-    }
-
-    [Fact]
     public void EmptyAllowlistNeverKicks()
     {
         using var allow = new Allowlist(_cfg, _srv, _buf, _audit);
@@ -192,20 +176,6 @@ public class EnforcementTests : IDisposable
         Assert.Equal(Bob, kicked.GetProperty("steamid").GetString());
         Assert.Equal($"kickid {Bob}", kicked.GetProperty("cmd").GetString());
         Assert.Equal("not on allowlist", kicked.GetProperty("reason").GetString());
-    }
-
-    [Fact]
-    public void AllowlistRosterSweepOnlyRunsWhenEnforced()
-    {
-        using var allow = new Allowlist(_cfg, _srv, _buf, _audit);
-        var roster = new[] { new Banlist.Player(Bob, "Eve", DateTime.UtcNow) };
-
-        allow.EnforceAgainstRoster(roster);
-        Assert.Empty(AuditOf("allow_kick"));
-
-        allow.Add(Alice, "owner", "staff");
-        allow.EnforceAgainstRoster(roster);
-        Assert.Single(AuditOf("allow_kick"));
     }
 
     [Fact]

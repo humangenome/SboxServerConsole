@@ -5,7 +5,7 @@
 # SboxServerConsole
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Platform: Windows + Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue.svg)](#install)
 [![Source RCON](https://img.shields.io/badge/Source_RCON-Built--in-green.svg)](https://developer.valvesoftware.com/wiki/Source_RCON_Protocol)
 [![s&box](https://img.shields.io/badge/s%26box-Dedicated_Server-darkred.svg)](https://store.steampowered.com/app/590830/)

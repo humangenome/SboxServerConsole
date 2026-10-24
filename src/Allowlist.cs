@@ -17,20 +17,13 @@ public sealed class Allowlist : IDisposable
         [JsonPropertyName("added_by")]  public string AddedBy { get; set; } = "";
     }
 
-    sealed class AllowlistFile
-    {
-        [JsonPropertyName("allow")] public List<Entry> Allow { get; set; } = new();
-    }
-
-    readonly string? _path;
+    readonly SteamIdListFile<Entry> _store;
     readonly ServerProcess _server;
     readonly MessageBuffer _buffer;
     readonly AuditLog _audit;
     readonly CliConfig _cfg;
     readonly object _lock = new();
-    readonly Dictionary<string, Entry> _allow = new(StringComparer.Ordinal);
     readonly PlayerLineParser _parser;
-    bool _storeBlocked;
 
     public Allowlist(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit)
     {
@@ -38,19 +31,30 @@ public sealed class Allowlist : IDisposable
         _server = server;
         _buffer = buffer;
         _audit = audit;
-        _path = string.IsNullOrWhiteSpace(cfg.AllowlistPath) ? null : cfg.AllowlistPath;
         _parser = new PlayerLineParser(cfg);
-        Load();
+        _store = new SteamIdListFile<Entry>(cfg.AllowlistPath, "allow", "allowlist", buffer,
+            el => new Entry
+            {
+                SteamId = SteamIdListFile<Entry>.Str(el, "steamid"),
+                Note = SteamIdListFile<Entry>.Str(el, "note"),
+                AddedAt = SteamIdListFile<Entry>.Str(el, "added_at"),
+                AddedBy = SteamIdListFile<Entry>.Str(el, "added_by"),
+            },
+            e => e.SteamId, e => e.AddedAt);
+        // An unreadable file is kept. An allowlist that silently became empty would also
+        // open a private server to everyone, so the warning says that plainly.
+        _store.Load((path, kept, ex) => $"warn: allowlist {path} could not be read ({ex.Message}); the allowlist is EMPTY, so the server is open to everyone" +
+            (kept is null ? ", and changes are NOT saved so the file is left as it is" : $"; the unreadable file was kept as {kept}"));
         _buffer.OnAppend += OnLine;
     }
 
-    public bool Persisted => _path is not null;
-    public bool Enforced { get { lock (_lock) return _allow.Count > 0; } }
-    public int Count { get { lock (_lock) return _allow.Count; } }
+    public bool Persisted => _store.Persisted;
+    public bool Enforced { get { lock (_lock) return _store.Items.Count > 0; } }
+    public int Count { get { lock (_lock) return _store.Items.Count; } }
 
     public IReadOnlyList<Entry> All()
     {
-        lock (_lock) return _allow.Values.OrderBy(b => b.AddedAt).ToList();
+        lock (_lock) return _store.Ordered();
     }
 
     public bool Add(string steamId, string note, string by) => TryAdd(steamId, note, by, out _);
@@ -60,14 +64,14 @@ public sealed class Allowlist : IDisposable
         if (!_parser.IsUsableId(steamId, out error)) return false;
         lock (_lock)
         {
-            _allow[steamId] = new Entry
+            _store.Items[steamId] = new Entry
             {
                 SteamId = steamId,
                 Note = note ?? "",
                 AddedAt = DateTime.UtcNow.ToString("o"),
                 AddedBy = by ?? "",
             };
-            Save();
+            _store.Save();
         }
         _audit.Record("allow_add", new Dictionary<string, object?>
         {
@@ -83,8 +87,8 @@ public sealed class Allowlist : IDisposable
         bool removed;
         lock (_lock)
         {
-            removed = _allow.Remove(steamId);
-            if (removed) Save();
+            removed = _store.Items.Remove(steamId);
+            if (removed) _store.Save();
         }
         if (removed)
         {
@@ -95,7 +99,7 @@ public sealed class Allowlist : IDisposable
 
     public bool IsAllowed(string steamId)
     {
-        lock (_lock) return _allow.ContainsKey(steamId);
+        lock (_lock) return _store.Items.ContainsKey(steamId);
     }
 
     void OnLine(MessageBuffer.Entry e)
@@ -119,59 +123,6 @@ public sealed class Allowlist : IDisposable
             ["cmd"] = cmd,
             ["sent"] = ok,
         });
-    }
-
-    public void EnforceAgainstRoster(IReadOnlyList<Banlist.Player> snapshot)
-    {
-        if (!Enforced) return;
-        foreach (var p in snapshot)
-        {
-            if (!IsAllowed(p.SteamId)) TryKick(p.SteamId, "not on allowlist (roster sweep)");
-        }
-    }
-
-    void Load()
-    {
-        if (_path is null || !File.Exists(_path)) return;
-        try
-        {
-            var json = File.ReadAllText(_path);
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("allow", out var arr)) return;
-            foreach (var el in arr.EnumerateArray())
-            {
-                var e = new Entry
-                {
-                    SteamId = el.TryGetProperty("steamid", out var s) ? s.GetString() ?? "" : "",
-                    Note = el.TryGetProperty("note", out var n) ? n.GetString() ?? "" : "",
-                    AddedAt = el.TryGetProperty("added_at", out var a) ? a.GetString() ?? "" : "",
-                    AddedBy = el.TryGetProperty("added_by", out var u) ? u.GetString() ?? "" : "",
-                };
-                if (!string.IsNullOrEmpty(e.SteamId)) _allow[e.SteamId] = e;
-            }
-        }
-        catch (Exception ex)
-        {
-            // Keep the unreadable file. An allowlist that silently became empty would
-            // also open a private server to everyone, so say that plainly.
-            string? kept = StoreFile.SetAside(_path);
-            _allow.Clear();
-            _storeBlocked = kept is null;
-            _buffer.Append("system", $"warn: allowlist {_path} could not be read ({ex.Message}); the allowlist is EMPTY, so the server is open to everyone" +
-                (kept is null ? ", and changes are NOT saved so the file is left as it is" : $"; the unreadable file was kept as {kept}"));
-        }
-    }
-
-    void Save()
-    {
-        if (_path is null || _storeBlocked) return;
-        var opts = new JsonSerializerOptions { WriteIndented = true };
-        var data = new AllowlistFile { Allow = _allow.Values.OrderBy(b => b.AddedAt).ToList() };
-        try { StoreFile.WriteAtomic(_path, JsonSerializer.Serialize(data, opts)); }
-        catch (Exception ex)
-        {
-            _buffer.Append("system", $"allowlist save failed: {ex.Message}");
-        }
     }
 
     public void Dispose() => _buffer.OnAppend -= OnLine;

@@ -4,6 +4,27 @@ All notable changes to SboxServerConsole are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-10-24
+
+### Changed
+
+- **Runs on .NET 10.** Microsoft ends .NET 8 support on 2026-11-10. The release files are still self-contained, so there is nothing to install.
+- **Releases wait for the Windows smoke test.** The exact `SboxServerConsole.exe` a release publishes now runs on Windows (console, job object, HTTP.sys, service install) before anything is published. The Windows zip carries only the two service scripts, no longer the maintainers' release checker.
+
+### Fixed
+
+- **Dashboard: a wrong password is said once.** The dashboard used to carry on after a wrong password, polling every 5 seconds, which kept tripping the agent's wrong-password lockout for that browser's address, and it kept the wrong password for the next reload. It now checks once, says "Wrong password." (or that the address is locked out) and stops. Only a password the agent accepted is kept for the tab.
+- **Dashboard: the password stays out of the address.** The live console sent the password as `/stream?password=...`, where it ends up in proxy logs and browser history. It is now sent in a header; the console reconnects by itself and picks up after the last line it showed. `?password=` still works for clients that cannot set headers.
+- **Dashboard: works on a phone.** On narrow screens the side panel moves under the console. Lists stop refreshing while the tab is hidden.
+- **A refused command says why.** `/execute` and `/chat` answer `400` for a command with a tab or another control character; it used to come back as `503 child not running`.
+- **RCON: long replies keep their characters.** Replies over 4 KB were cut at fixed byte offsets, so an accented or emoji name in a long `status` turned into replacement characters. They are now cut between characters. Two RCON clients sending at the same moment no longer receive each other's output.
+- **Status no longer shows a server that stopped answering.** After two missed A2S polls, `/status` and `/players` drop the last answer instead of showing it forever. Answers split over several packets (a large player list) are now read.
+- Password checks take the same time whatever the supplied password's length.
+
+### Removed
+
+- A roster sweep for bans and the allowlist that nothing called.
+
 ## [1.4.1] - 2026-10-21
 
 ### Changed

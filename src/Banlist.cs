@@ -17,18 +17,13 @@ public sealed class Banlist : IDisposable
         [JsonPropertyName("added_by")]  public string AddedBy { get; set; } = "";
     }
 
-    sealed class BanlistFile
-    {
-        [JsonPropertyName("bans")] public List<Ban> Bans { get; set; } = new();
-    }
-
     public sealed record Player(string SteamId, string Name, DateTime SeenAt);
 
     // How long A2S may report players with no join line seen before we say the
     // join detection is blind.
     static readonly TimeSpan BlindJoinGrace = TimeSpan.FromMinutes(3);
 
-    readonly string? _path;
+    readonly SteamIdListFile<Ban> _store;
     readonly ServerProcess _server;
     readonly MessageBuffer _buffer;
     readonly AuditLog _audit;
@@ -36,18 +31,16 @@ public sealed class Banlist : IDisposable
     readonly CliConfig _cfg;
     readonly PlayerLineParser _parser;
     readonly object _lock = new();
-    readonly Dictionary<string, Ban> _bans = new(StringComparer.Ordinal);
     readonly Dictionary<string, Player> _online = new(StringComparer.Ordinal);
-    long _joinsSeen;
     DateTime? _a2sPlayersSince;
     bool _blindWarned;
-    bool _storeBlocked;
 
     // Test seam for the blind-join grace period.
     internal Func<DateTime> Now { get; set; } = () => DateTime.UtcNow;
 
-    public event Action<Player>? OnPlayerJoin;
-    public event Action<string>? OnPlayerLeave;
+    // Test seams: raised for an announced join (not a banned one) and an announced leave.
+    internal event Action<Player>? OnPlayerJoin;
+    internal event Action<string>? OnPlayerLeave;
 
     public Banlist(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit, DiscordWebhook discord)
     {
@@ -57,19 +50,28 @@ public sealed class Banlist : IDisposable
         _audit = audit;
         _discord = discord;
         _parser = new PlayerLineParser(cfg);
-        _path = string.IsNullOrWhiteSpace(cfg.BanlistPath) ? null : cfg.BanlistPath;
-        Load();
+        _store = new SteamIdListFile<Ban>(cfg.BanlistPath, "bans", "banlist", buffer,
+            el => new Ban
+            {
+                SteamId = SteamIdListFile<Ban>.Str(el, "steamid"),
+                Reason = SteamIdListFile<Ban>.Str(el, "reason"),
+                AddedAt = SteamIdListFile<Ban>.Str(el, "added_at"),
+                AddedBy = SteamIdListFile<Ban>.Str(el, "added_by"),
+            },
+            b => b.SteamId, b => b.AddedAt);
+        // An unreadable file is kept: the next save would otherwise overwrite every ban in it.
+        _store.Load((path, kept, ex) => $"warn: banlist {path} could not be read ({ex.Message}); starting with no bans" +
+            (kept is null ? " and NOT saving changes, so the file is left as it is" : $", the unreadable file was kept as {kept}"));
         _buffer.OnAppend += OnLine;
     }
 
     public bool ConnectRegexConfigured => _parser.ConnectRegexConfigured;
     public bool DisconnectRegexConfigured => _parser.DisconnectRegexConfigured;
-    public bool Persisted => _path is not null;
-    public long JoinsSeen { get { lock (_lock) return _joinsSeen; } }
+    public bool Persisted => _store.Persisted;
 
     public IReadOnlyList<Ban> All()
     {
-        lock (_lock) return _bans.Values.OrderBy(b => b.AddedAt).ToList();
+        lock (_lock) return _store.Ordered();
     }
 
     public IReadOnlyList<Player> Online()
@@ -84,14 +86,14 @@ public sealed class Banlist : IDisposable
         if (!_parser.IsUsableId(steamId, out error)) return false;
         lock (_lock)
         {
-            _bans[steamId] = new Ban
+            _store.Items[steamId] = new Ban
             {
                 SteamId = steamId,
                 Reason = reason ?? "",
                 AddedAt = DateTime.UtcNow.ToString("o"),
                 AddedBy = by ?? "",
             };
-            Save();
+            _store.Save();
         }
         _audit.Record("ban_add", new Dictionary<string, object?>
         {
@@ -109,8 +111,8 @@ public sealed class Banlist : IDisposable
         bool removed;
         lock (_lock)
         {
-            removed = _bans.Remove(steamId);
-            if (removed) Save();
+            removed = _store.Items.Remove(steamId);
+            if (removed) _store.Save();
         }
         if (removed)
         {
@@ -121,7 +123,7 @@ public sealed class Banlist : IDisposable
 
     public bool IsBanned(string steamId)
     {
-        lock (_lock) return _bans.ContainsKey(steamId);
+        lock (_lock) return _store.Items.ContainsKey(steamId);
     }
 
     // The child exited: nobody is connected any more.
@@ -142,7 +144,7 @@ public sealed class Banlist : IDisposable
         if (r.Kind == PlayerLineParser.Kind.Join)
         {
             var p = new Player(r.SteamId, r.Name, DateTime.UtcNow);
-            lock (_lock) { _online[r.SteamId] = p; _joinsSeen++; }
+            lock (_lock) _online[r.SteamId] = p;
             if (IsBanned(r.SteamId)) TryKick(r.SteamId);
             else
             {
@@ -201,60 +203,6 @@ public sealed class Banlist : IDisposable
             ["cmd"] = cmd,
             ["sent"] = ok,
         });
-    }
-
-    public void UpdateOnlineFromStatus(IReadOnlyList<Player> snapshot)
-    {
-        lock (_lock)
-        {
-            _online.Clear();
-            foreach (var p in snapshot) _online[p.SteamId] = p;
-        }
-        // Enforce banlist against fresh roster.
-        foreach (var p in snapshot)
-        {
-            if (IsBanned(p.SteamId)) TryKick(p.SteamId);
-        }
-    }
-
-    void Load()
-    {
-        if (_path is null || !File.Exists(_path)) return;
-        try
-        {
-            var json = File.ReadAllText(_path);
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("bans", out var arr)) return;
-            foreach (var el in arr.EnumerateArray())
-            {
-                var b = new Ban
-                {
-                    SteamId = el.TryGetProperty("steamid", out var s) ? s.GetString() ?? "" : "",
-                    Reason = el.TryGetProperty("reason", out var r) ? r.GetString() ?? "" : "",
-                    AddedAt = el.TryGetProperty("added_at", out var a) ? a.GetString() ?? "" : "",
-                    AddedBy = el.TryGetProperty("added_by", out var u) ? u.GetString() ?? "" : "",
-                };
-                if (!string.IsNullOrEmpty(b.SteamId)) _bans[b.SteamId] = b;
-            }
-        }
-        catch (Exception ex)
-        {
-            // Keep the unreadable file: the next save would otherwise overwrite every ban in it.
-            string? kept = StoreFile.SetAside(_path);
-            _bans.Clear();
-            _storeBlocked = kept is null;
-            _buffer.Append("system", $"warn: banlist {_path} could not be read ({ex.Message}); starting with no bans" +
-                (kept is null ? " and NOT saving changes, so the file is left as it is" : $", the unreadable file was kept as {kept}"));
-        }
-    }
-
-    void Save()
-    {
-        if (_path is null || _storeBlocked) return;
-        var opts = new JsonSerializerOptions { WriteIndented = true };
-        var data = new BanlistFile { Bans = _bans.Values.OrderBy(b => b.AddedAt).ToList() };
-        try { StoreFile.WriteAtomic(_path, JsonSerializer.Serialize(data, opts)); }
-        catch (Exception ex) { _buffer.Append("system", $"banlist save failed: {ex.Message}"); }
     }
 
     public void Dispose() => _buffer.OnAppend -= OnLine;

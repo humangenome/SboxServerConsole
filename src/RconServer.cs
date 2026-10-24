@@ -48,6 +48,7 @@ public sealed class RconServer : IDisposable
     readonly TcpListener _listener;
     readonly AuthThrottle _throttle;
     readonly CancellationTokenSource _cts = new();
+    readonly object _execLock = new();
     int _activeClients;
     Thread? _acceptThread;
 
@@ -141,7 +142,7 @@ public sealed class RconServer : IDisposable
                         SendPacket(net, -1, SERVERDATA_AUTH_RESPONSE, "");
                         break;
                     }
-                    bool ok = ConstantTimeEquals(body, _cfg.RconPassword);
+                    bool ok = PasswordCheck.Matches(body, _cfg.RconPassword);
                     if (ok) _throttle.RecordSuccess(remoteAddress);
                     else if (_throttle.RecordFailure(remoteAddress))
                         _buffer.Append("system", $"rcon: {remoteAddress} locked out for {AuthThrottle.Lockout.TotalMinutes:0} minutes after {AuthThrottle.MaxFailures} wrong passwords");
@@ -173,8 +174,28 @@ public sealed class RconServer : IDisposable
                     SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "command may not contain line breaks or control characters");
                     continue;
                 }
-                long preSeq = _buffer.LastSeq;
-                bool sent = _server.TrySendCommand(body);
+                // One command window at a time across RCON clients: the reply is whatever the
+                // server printed in the window, so two overlapping windows would each carry
+                // the other client's output.
+                bool sent;
+                string reply;
+                lock (_execLock)
+                {
+                    long preSeq = _buffer.LastSeq;
+                    sent = _server.TrySendCommand(body);
+                    reply = "";
+                    if (sent)
+                    {
+                        Thread.Sleep(ResponseCollectMs);
+                        var sb = new StringBuilder();
+                        foreach (var e in _buffer.SinceSeq(preSeq))
+                        {
+                            if (e.Stream == "input") continue;
+                            sb.Append(e.Line).Append('\n');
+                        }
+                        reply = sb.ToString();
+                    }
+                }
                 _audit.Record("rcon_execute", new Dictionary<string, object?>
                 {
                     ["client"] = remote,
@@ -186,15 +207,7 @@ public sealed class RconServer : IDisposable
                     SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "child not running");
                     continue;
                 }
-                Thread.Sleep(ResponseCollectMs);
-                var collected = _buffer.SinceSeq(preSeq);
-                var sb = new StringBuilder();
-                foreach (var e in collected)
-                {
-                    if (e.Stream == "input") continue;
-                    sb.Append(e.Line).Append('\n');
-                }
-                SendBodyChunked(net, id, sb.ToString());
+                SendBodyChunked(net, id, reply);
             }
         }
         catch (IOException)
@@ -220,13 +233,32 @@ public sealed class RconServer : IDisposable
             SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "");
             return;
         }
-        var bytes = Encoding.UTF8.GetBytes(body);
-        for (int o = 0; o < bytes.Length; o += MaxBodyBytes)
-        {
-            int len = Math.Min(MaxBodyBytes, bytes.Length - o);
-            string chunk = Encoding.UTF8.GetString(bytes, o, len);
+        foreach (var chunk in SplitUtf8(body, MaxBodyBytes))
             SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, chunk);
+    }
+
+    // Splits text into pieces of at most maxBytes UTF-8 bytes without cutting a character
+    // in two (a cut at a fixed byte offset turned an accented or emoji name in a long
+    // status into replacement characters).
+    internal static List<string> SplitUtf8(string text, int maxBytes)
+    {
+        var parts = new List<string>();
+        var bytes = Encoding.UTF8.GetBytes(text);
+        int o = 0;
+        while (o < bytes.Length)
+        {
+            int len = Math.Min(maxBytes, bytes.Length - o);
+            if (o + len < bytes.Length)
+            {
+                // Step back off continuation bytes (10xxxxxx) to the start of a character.
+                int cut = o + len;
+                while (cut > o && (bytes[cut] & 0xC0) == 0x80) cut--;
+                if (cut > o) len = cut - o;
+            }
+            parts.Add(Encoding.UTF8.GetString(bytes, o, len));
+            o += len;
         }
+        return parts;
     }
 
     static bool TryReadPacket(NetworkStream net, out int id, out int type, out string body)
@@ -270,13 +302,5 @@ public sealed class RconServer : IDisposable
         // Last two bytes already 0 (NUL body terminator + NUL pad).
         net.Write(pkt, 0, pkt.Length);
         net.Flush();
-    }
-
-    static bool ConstantTimeEquals(string a, string b)
-    {
-        if (a.Length != b.Length) return false;
-        int diff = 0;
-        for (int i = 0; i < a.Length; i++) diff |= a[i] ^ b[i];
-        return diff == 0;
     }
 }

@@ -145,10 +145,20 @@ public class HttpApiTests
 
         var (newline, newlineBody) = await h.Call("POST", "/execute", json: JsonSerializer.Serialize(new { cmd = "say hi\nquit" }));
         Assert.Equal(400, newline);
-        Assert.Contains("newline", newlineBody);
+        Assert.Contains("line breaks or control characters", newlineBody);
 
         var (carriage, _) = await h.Call("POST", "/execute", json: JsonSerializer.Serialize(new { cmd = "say hi\rquit" }));
         Assert.Equal(400, carriage);
+
+        // A tab or another control character is refused with a clear 400, not the 503
+        // ("child not running") the refusal used to come back as, and nothing is audited
+        // as an attempt to run it.
+        var (tab, tabBody) = await h.Call("POST", "/execute", json: JsonSerializer.Serialize(new { cmd = "status\tx" }));
+        Assert.Equal(400, tab);
+        Assert.Contains("control characters", tabBody);
+        var (ctrlC, _) = await h.Call("POST", "/execute", json: JsonSerializer.Serialize(new { cmd = "status\u0003" }));
+        Assert.Equal(400, ctrlC);
+        Assert.DoesNotContain(h.AuditEvents(), e => e.GetProperty("event").GetString() == "execute");
 
         var (tooLong, tooLongBody) = await h.Call("POST", "/execute", json: JsonSerializer.Serialize(new { cmd = new string('a', 1025) }));
         Assert.Equal(400, tooLong);
@@ -194,6 +204,10 @@ public class HttpApiTests
 
         var (newline, _) = await h.Call("POST", "/chat", json: JsonSerializer.Serialize(new { text = "a\nb" }));
         Assert.Equal(400, newline);
+
+        var (control, controlBody) = await h.Call("POST", "/chat", json: JsonSerializer.Serialize(new { text = "a\u0001b" }));
+        Assert.Equal(400, control);
+        Assert.Contains("control characters", controlBody);
     }
 
     // ---- bans / allows / scheduler over HTTP ----

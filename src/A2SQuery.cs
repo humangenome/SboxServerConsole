@@ -40,6 +40,10 @@ public sealed class A2SQuery : IDisposable
     // they come back, not a line every poll while a server loads or sits stopped.
     string? _lastError;
     bool _everAnswered;
+    // Polls in a row without an answer. After StaleAfterMisses the last answer is
+    // dropped, so /status and /players stop showing a server that went quiet.
+    int _misses;
+    const int StaleAfterMisses = 2;
 
     // Raised after every successful A2S_INFO answer.
     public event Action<InfoSnapshot>? OnSnapshot;
@@ -79,15 +83,18 @@ public sealed class A2SQuery : IDisposable
                 using var udp = new UdpClient { Client = { ReceiveTimeout = 1500, SendTimeout = 1500 } };
                 udp.Connect(endpoint);
                 var info = QueryInfo(udp);
-                IReadOnlyList<PlayerEntry> players = info is null ? Array.Empty<PlayerEntry>() : QueryPlayers(udp);
-                lock (_lock)
-                {
-                    if (info is not null) _latestInfo = info;
-                    _latestPlayers = players;
-                }
                 if (info is null) NoteFailure("the reply was not an A2S_INFO answer");
                 else
                 {
+                    IReadOnlyList<PlayerEntry> players;
+                    try { players = QueryPlayers(udp); }
+                    catch (Exception) { players = Array.Empty<PlayerEntry>(); }
+                    lock (_lock)
+                    {
+                        _latestInfo = info;
+                        _latestPlayers = players;
+                        _misses = 0;
+                    }
                     NoteSuccess();
                     try { OnSnapshot?.Invoke(info); } catch { }
                 }
@@ -104,6 +111,14 @@ public sealed class A2SQuery : IDisposable
 
     void NoteFailure(string reason)
     {
+        lock (_lock)
+        {
+            if (++_misses >= StaleAfterMisses)
+            {
+                _latestInfo = null;
+                _latestPlayers = Array.Empty<PlayerEntry>();
+            }
+        }
         if (_lastError == reason) return;
         _lastError = reason;
         // Until the first answer this is usually just the server still loading.
@@ -118,6 +133,50 @@ public sealed class A2SQuery : IDisposable
             _buffer.Append("system", $"a2s: udp/{_cfg.QueryPort} answering");
         _lastError = null;
         _everAnswered = true;
+    }
+
+    // One answer. A long answer (a big player list) arrives split over several packets
+    // marked 0xFFFFFFFE; they are put back together here, in order.
+    static byte[] Receive(UdpClient udp)
+    {
+        var ep = (IPEndPoint?)null!;
+        byte[] first = udp.Receive(ref ep);
+        if (!IsSplit(first)) return first;
+        var parts = new List<byte[]> { first };
+        int total = first.Length > 8 ? first[8] : 0;
+        while (parts.Count < total && parts.Count < 32) parts.Add(udp.Receive(ref ep));
+        return AssembleSplit(parts) ?? throw new InvalidDataException("split A2S answer could not be put together");
+    }
+
+    static bool IsSplit(byte[] p) => p.Length >= 4 && p[0] == 0xFE && p[1] == 0xFF && p[2] == 0xFF && p[3] == 0xFF;
+
+    // Source split layout: int32 -2, int32 id, byte total, byte number, int16 max size, payload.
+    // The payloads joined in packet-number order start with the usual 0xFFFFFFFF header.
+    // Compressed answers (id with the top bit set) are not supported.
+    internal static byte[]? AssembleSplit(IReadOnlyList<byte[]> packets)
+    {
+        const int Header = 12;
+        if (packets.Count == 0) return null;
+        var byNumber = new SortedDictionary<int, byte[]>();
+        int id = 0, total = 0;
+        foreach (var p in packets)
+        {
+            if (!IsSplit(p) || p.Length < Header) return null;
+            int pid = BitConverter.ToInt32(p, 4);
+            if ((pid & unchecked((int)0x80000000)) != 0) return null;
+            if (byNumber.Count == 0) { id = pid; total = p[8]; }
+            else if (pid != id || p[8] != total) return null;
+            byNumber[p[9]] = p;
+        }
+        if (total == 0 || byNumber.Count != total) return null;
+        var ms = new MemoryStream();
+        for (int n = 0; n < total; n++)
+        {
+            if (!byNumber.TryGetValue(n, out var p)) return null;
+            ms.Write(p, Header, p.Length - Header);
+        }
+        var joined = ms.ToArray();
+        return joined.Length >= 5 && joined[0] == 0xFF && joined[1] == 0xFF && joined[2] == 0xFF && joined[3] == 0xFF ? joined : null;
     }
 
     static byte[] BuildInfoRequest(int? challenge)
@@ -136,8 +195,7 @@ public sealed class A2SQuery : IDisposable
     InfoSnapshot? QueryInfo(UdpClient udp)
     {
         udp.Send(BuildInfoRequest(null));
-        var ep = (IPEndPoint?)null!;
-        byte[] resp = udp.Receive(ref ep);
+        byte[] resp = Receive(udp);
         if (resp.Length < 5) return null;
         // Skip 4-byte header (0xFFFFFFFF), look at response type byte.
         if (resp[0] != 0xFF || resp[1] != 0xFF || resp[2] != 0xFF || resp[3] != 0xFF) return null;
@@ -145,7 +203,7 @@ public sealed class A2SQuery : IDisposable
         {
             int challenge = BitConverter.ToInt32(resp, 5);
             udp.Send(BuildInfoRequest(challenge));
-            resp = udp.Receive(ref ep);
+            resp = Receive(udp);
             if (resp.Length < 5 || resp[4] != 0x49) return null;
         }
         else if (resp[4] != 0x49) return null;
@@ -183,8 +241,7 @@ public sealed class A2SQuery : IDisposable
         bw.Write((byte)'U');
         bw.Write(unchecked((int)0xFFFFFFFF));
         udp.Send(ms.ToArray());
-        var ep = (IPEndPoint?)null!;
-        byte[] resp = udp.Receive(ref ep);
+        byte[] resp = Receive(udp);
         if (resp.Length < 9) return Array.Empty<PlayerEntry>();
         int challenge;
         if (resp[4] == 0x41) challenge = BitConverter.ToInt32(resp, 5);
@@ -197,7 +254,7 @@ public sealed class A2SQuery : IDisposable
         bw.Write((byte)'U');
         bw.Write(challenge);
         udp.Send(ms.ToArray());
-        resp = udp.Receive(ref ep);
+        resp = Receive(udp);
         if (resp.Length < 6 || resp[4] != 0x44) return Array.Empty<PlayerEntry>();
         return ParsePlayers(resp);
     }
