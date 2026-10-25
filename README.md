@@ -43,7 +43,7 @@ Open the dashboard in a browser and you get the server's console as it happens, 
 
 ### 🚫 Bans and allowlist, enforced on join
 
-The agent watches the server's own join lines and kicks a banned SteamID the moment it connects. Fill the allowlist and only the players on it can stay; leave it empty and the server is open. Both lists are plain JSON files that survive restarts, and a file that cannot be read is set aside rather than overwritten.
+The agent watches the server's own join lines and kicks a banned SteamID the moment it connects. Fill the allowlist and only the players on it can join; leave it empty and the server is open. Adding the first entry does not kick players who are already on, so kick them from the Players tab if they should go. Both lists are plain JSON files that survive restarts, and a file that cannot be read is set aside rather than overwritten.
 
 <p align="center">
   <img src="docs/screenshots/bans-1.4.1.png" alt="The dashboard's Bans tab with two banned SteamIDs, their reasons and unban buttons" width="400">

@@ -184,7 +184,7 @@ jobs:
             echo
             echo "## Install / Upgrade"
             echo
-            echo "Drop the binary next to your s&box dedicated server install and launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#installation). Replacing the binary keeps your bans, allowlist, scheduled jobs and audit log; they live in the files your config names."
+            echo "Drop the binary next to your s&box dedicated server install and launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#install). Replacing the binary keeps your bans, allowlist, scheduled jobs and audit log; they live in the files your config names."
             echo
             echo "## Official Hosting"
             echo
