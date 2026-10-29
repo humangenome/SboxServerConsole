@@ -16,6 +16,7 @@
   "banlist":               "C:\\sbox-server\\state\\banlist.json",
   "allowlist":             "C:\\sbox-server\\state\\allowlist.json",
   "kick-command":          "kick {steamid}",
+  "max-players":           0,
   "scheduler":             "C:\\sbox-server\\state\\scheduler.json",
   "logs-dir":              "C:\\sbox-server\\logs",
   "no-auto-restart":       false,

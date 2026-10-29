@@ -4,6 +4,12 @@ All notable changes to SboxServerConsole are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-10-29
+
+### Added
+
+- **A player limit.** A dedicated s&box server ignores `+maxplayers` and advertises the game's own player count. With `max-players` set, a player who joins when that many are already on is kicked with the reason "Server is full." A rejoin is not counted twice, and a banned joiner or one the allowlist refuses gets only that kick. Off by default.
+
 ## [1.5.0] - 2026-10-24
 
 ### Changed

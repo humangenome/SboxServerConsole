@@ -164,6 +164,11 @@ reports players for three minutes while no join line has ever matched, the agent
 writes one warning to the console: the connect regex is not seeing this build's
 output, so the roster, bans and the allowlist cannot see joins either.
 
+With `--max-players N`, a player who joins while N players are already in this
+roster is kicked with the reason `Server is full.` (the `--kick-command` with that
+reason added). A dedicated s&box server ignores `+maxplayers`. A banned joiner, or
+one the allowlist refuses, gets only that kick.
+
 `a2s_players` is the authoritative roster the child reports over A2S_PLAYER on
 `--query-port`. It carries no steamids; the A2S protocol does not return them.
 

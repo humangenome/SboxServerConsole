@@ -7,6 +7,9 @@ namespace SboxServerConsole;
 // Storage is a single JSON file; small enough to load and rewrite atomically.
 // When a join line matches, the SteamID is checked; a banned player is kicked
 // with the configured kick template. Leave lines keep the roster fresh.
+// With --max-players, a joiner who arrives when that many players are already on
+// is kicked with the reason "Server is full." (a dedicated s&box server keeps no
+// limit of its own: it ignores +maxplayers).
 public sealed class Banlist : IDisposable
 {
     public sealed class Ban
@@ -18,6 +21,9 @@ public sealed class Banlist : IDisposable
     }
 
     public sealed record Player(string SteamId, string Name, DateTime SeenAt);
+
+    // The reason a joiner over --max-players sees. The engine shows it after its own "Kicked from server."
+    public const string ServerFullReason = "Server is full.";
 
     // How long A2S may report players with no join line seen before we say the
     // join detection is blind.
@@ -41,6 +47,9 @@ public sealed class Banlist : IDisposable
     // Test seams: raised for an announced join (not a banned one) and an announced leave.
     internal event Action<Player>? OnPlayerJoin;
     internal event Action<string>? OnPlayerLeave;
+
+    // A joiner another hook already kicks (the allowlist); the player limit leaves them to it.
+    internal Func<string, bool>? RefusedElsewhere { get; set; }
 
     public Banlist(CliConfig cfg, ServerProcess server, MessageBuffer buffer, AuditLog audit, DiscordWebhook discord)
     {
@@ -144,8 +153,17 @@ public sealed class Banlist : IDisposable
         if (r.Kind == PlayerLineParser.Kind.Join)
         {
             var p = new Player(r.SteamId, r.Name, DateTime.UtcNow);
-            lock (_lock) _online[r.SteamId] = p;
+            // Players already on, the joiner left out, so a rejoin is not counted twice. The joiner still
+            // enters the roster: its disconnected line clears it, and a kick that does not land is not undercounted.
+            int alreadyOn;
+            lock (_lock)
+            {
+                alreadyOn = _online.Keys.Count(id => id != r.SteamId);
+                _online[r.SteamId] = p;
+            }
             if (IsBanned(r.SteamId)) TryKick(r.SteamId);
+            else if (_cfg.MaxPlayers > 0 && alreadyOn >= _cfg.MaxPlayers && !(RefusedElsewhere?.Invoke(r.SteamId) ?? false))
+                KickFull(r.SteamId, alreadyOn);
             else
             {
                 try { OnPlayerJoin?.Invoke(p); } catch { }
@@ -191,6 +209,20 @@ public sealed class Banlist : IDisposable
         if (warning is null) return;
         _buffer.Append("system", warning);
         _audit.Record("join_detection_blind", new Dictionary<string, object?> { ["a2s_players"] = players });
+    }
+
+    void KickFull(string steamId, int alreadyOn)
+    {
+        var cmd = _cfg.KickCommandTemplate.Replace("{steamid}", steamId) + " \"" + ServerFullReason + "\"";
+        bool ok = _server.TrySendCommand(cmd);
+        _audit.Record("full_kick", new Dictionary<string, object?>
+        {
+            ["steamid"] = steamId,
+            ["players"] = alreadyOn,
+            ["max_players"] = _cfg.MaxPlayers,
+            ["cmd"] = cmd,
+            ["sent"] = ok,
+        });
     }
 
     void TryKick(string steamId)

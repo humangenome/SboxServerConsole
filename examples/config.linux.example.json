@@ -16,6 +16,7 @@
   "banlist":               "/var/lib/sboxconsole/banlist.json",
   "allowlist":             "/var/lib/sboxconsole/allowlist.json",
   "kick-command":          "kick {steamid}",
+  "max-players":           0,
   "scheduler":             "/var/lib/sboxconsole/scheduler.json",
   "logs-dir":              "/var/log/sboxconsole",
   "no-auto-restart":       false,

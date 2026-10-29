@@ -45,6 +45,8 @@ Open the dashboard in a browser and you get the server's console as it happens, 
 
 The agent watches the server's own join lines and kicks a banned SteamID the moment it connects. Fill the allowlist and only the players on it can join; leave it empty and the server is open. Adding the first entry does not kick players who are already on, so kick them from the Players tab if they should go. Both lists are plain JSON files that survive restarts, and a file that cannot be read is set aside rather than overwritten.
 
+A dedicated s&box server ignores `+maxplayers`, so the agent can keep a player limit instead: set `max-players` and a player who joins when that many are already on is kicked with the reason "Server is full."
+
 <p align="center">
   <img src="docs/screenshots/bans-1.4.1.png" alt="The dashboard's Bans tab with two banned SteamIDs, their reasons and unban buttons" width="400">
   <img src="docs/screenshots/allows-1.4.1.png" alt="The dashboard's Allowlist tab, enforced, with two allowed SteamIDs and their notes" width="400">

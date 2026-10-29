@@ -22,6 +22,7 @@ public sealed class CliConfig
     public required string AllowlistPath { get; init; }
     public required string SchedulerPath { get; init; }
     public required string KickCommandTemplate { get; init; }
+    public required int MaxPlayers { get; init; }
     public required string ConnectLineRegex { get; init; }
     public required string DisconnectLineRegex { get; init; }
     public required string SuppressLineRegex { get; init; }
@@ -134,6 +135,9 @@ public sealed class CliConfig
         string allowlistPath = Get("allowlist", "");
         string schedulerPath = Get("scheduler", "");
         string kickCommandTemplate = Get("kick-command", "kick {steamid}");
+        // A player limit the server does not keep itself: a dedicated s&box server ignores +maxplayers (its
+        // session takes the game package's own MaxPlayers, 32 when the package sets none). 0 = no limit.
+        int maxPlayers = Math.Clamp(GetInt("max-players", 0), 0, 10000);
         // s&box server output shapes (engine source, NetworkSystem.Handshake.cs and
         // NetworkSystem.Connections.cs, checked against build 26.10.02):
         //   "01:20:36 Generic  Joe Bloggs [76561198966650247] is connecting"  - connect
@@ -217,6 +221,7 @@ public sealed class CliConfig
             AllowlistPath = allowlistPath,
             SchedulerPath = schedulerPath,
             KickCommandTemplate = kickCommandTemplate,
+            MaxPlayers = maxPlayers,
             ConnectLineRegex = connectLineRegex,
             DisconnectLineRegex = disconnectLineRegex,
             SuppressLineRegex = suppressLineRegex,
@@ -294,6 +299,8 @@ public sealed class CliConfig
               --allowlist <path>        JSON allowlist; when non-empty, kicks any steamid NOT on the list
                                         on connect. Empty allowlist disables enforcement (open server).
               --kick-command <tpl>      template for kick command, {steamid} placeholder (default "kick {steamid}")
+              --max-players <n>         when n players are already on, kick a joiner with the reason
+                                        "Server is full." (default 0 = no limit)
               --connect-regex <re>      regex with named (?<steamid>...) capture; banlist enforced when matches
                                         default matches s&box "<name> [STEAMID64] is connecting"
               --disconnect-regex <re>   regex with named (?<steamid>...) capture

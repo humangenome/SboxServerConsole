@@ -98,6 +98,8 @@ int RunAgent(ManualResetEventSlim done)
     using var discord = new DiscordWebhook(config.DiscordWebhookUrl, msg => buffer.Append("system", msg));
     using var banlist = new Banlist(config, server, buffer, audit, discord);
     using var allowlist = new Allowlist(config, server, buffer, audit);
+    // A joiner the allowlist kicks is not also kicked for a full server.
+    banlist.RefusedElsewhere = id => allowlist.Enforced && !allowlist.IsAllowed(id);
     using var scheduler = new Scheduler(config, server, buffer, audit);
     using var a2s = new A2SQuery(config, buffer);
     var logs = new LogsBrowser(config.LogsDir);

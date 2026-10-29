@@ -203,4 +203,117 @@ public class EnforcementTests : IDisposable
         Assert.Contains(AuditOf("ban_kick"), k => k.GetProperty("steamid").GetString() == Alice);
         Assert.Empty(AuditOf("allow_kick"));
     }
+
+    // --max-players: a dedicated s&box server ignores +maxplayers, so the agent keeps the limit. A joiner who
+    // arrives when that many players are already on is kicked with the reason "Server is full.".
+    const string Carol = "76561198000000003";
+
+    CliConfig Capped(int max) => Configs.Parse(_s.Dir,
+        "--banlist", _s.File("bans.json"),
+        "--allowlist", _s.File("allow.json"),
+        "--audit-log", _s.File("audit.jsonl"),
+        "--kick-command", "kickid {steamid}",
+        "--max-players", max.ToString());
+
+    [Fact]
+    public void NoPlayerLimitByDefault()
+    {
+        Assert.Equal(0, _cfg.MaxPlayers);
+        using var bans = new Banlist(_cfg, _srv, _buf, _audit, _discord);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Connecting("Eve", Bob));
+        _buf.Append("stdout", Connecting("Cat", Carol));
+        Assert.Empty(AuditOf("full_kick"));
+        Assert.Equal(3, bans.Online().Count);
+    }
+
+    [Fact]
+    public void UnderThePlayerLimitIsLetIn()
+    {
+        using var bans = new Banlist(Capped(2), _srv, _buf, _audit, _discord);
+        var joined = new List<string>();
+        bans.OnPlayerJoin += p => joined.Add(p.SteamId);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Connecting("Eve", Bob));
+        Assert.Empty(AuditOf("full_kick"));
+        Assert.Equal(new[] { Alice, Bob }, joined);
+    }
+
+    [Fact]
+    public void AJoinerOverThePlayerLimitIsToldTheServerIsFull()
+    {
+        using var bans = new Banlist(Capped(2), _srv, _buf, _audit, _discord);
+        var joined = new List<string>();
+        bans.OnPlayerJoin += p => joined.Add(p.SteamId);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Connecting("Eve", Bob));
+        _buf.Append("stdout", Connecting("Cat", Carol));
+
+        var kick = Assert.Single(AuditOf("full_kick"));
+        Assert.Equal(Carol, kick.GetProperty("steamid").GetString());
+        Assert.Equal($"kickid {Carol} \"Server is full.\"", kick.GetProperty("cmd").GetString());
+        Assert.Equal(2, kick.GetProperty("players").GetInt32());
+        Assert.Equal(2, kick.GetProperty("max_players").GetInt32());
+        Assert.Equal(new[] { Alice, Bob }, joined);
+        Assert.Empty(AuditOf("ban_kick"));
+    }
+
+    [Fact]
+    public void ARejoinIsNotCountedTwice()
+    {
+        using var bans = new Banlist(Capped(1), _srv, _buf, _audit, _discord);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        Assert.Empty(AuditOf("full_kick"));
+        Assert.Single(bans.Online());
+    }
+
+    [Fact]
+    public void ALeaveFreesTheSlot()
+    {
+        using var bans = new Banlist(Capped(1), _srv, _buf, _audit, _discord);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Disconnecting(Alice));
+        _buf.Append("stdout", Connecting("Eve", Bob));
+        Assert.Empty(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void AKickedJoinerLeavesNoGhost()
+    {
+        using var bans = new Banlist(Capped(1), _srv, _buf, _audit, _discord);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Connecting("Eve", Bob));      // full: kicked
+        _buf.Append("stdout", Disconnecting(Bob));          // the kick closes the connection
+        _buf.Append("stdout", Disconnecting(Alice));
+        _buf.Append("stdout", Connecting("Cat", Carol));    // the server is empty again
+        var kick = Assert.Single(AuditOf("full_kick"));
+        Assert.Equal(Bob, kick.GetProperty("steamid").GetString());
+        Assert.Equal(Carol, Assert.Single(bans.Online()).SteamId);
+    }
+
+    [Fact]
+    public void ABannedJoinerGetsOnlyTheBanKick()
+    {
+        using var bans = new Banlist(Capped(1), _srv, _buf, _audit, _discord);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        bans.Add(Bob, "griefing", "staff");
+        _buf.Append("stdout", Connecting("Eve", Bob));
+        Assert.Contains(AuditOf("ban_kick"), k => k.GetProperty("steamid").GetString() == Bob);
+        Assert.Empty(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void AJoinerTheAllowlistRefusesGetsOnlyThatKick()
+    {
+        var cfg = Capped(1);
+        using var bans = new Banlist(cfg, _srv, _buf, _audit, _discord);
+        using var allow = new Allowlist(cfg, _srv, _buf, _audit);
+        bans.RefusedElsewhere = id => allow.Enforced && !allow.IsAllowed(id);
+        allow.Add(Alice, "owner", "staff");
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Connecting("Eve", Bob));
+        Assert.Equal(Bob, Assert.Single(AuditOf("allow_kick")).GetProperty("steamid").GetString());
+        Assert.Empty(AuditOf("full_kick"));
+    }
 }

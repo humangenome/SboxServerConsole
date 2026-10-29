@@ -169,4 +169,16 @@ public class CliConfigTests
         Assert.Equal(CliConfig.DefaultConnectLineRegex, cfg.ConnectLineRegex);
         Assert.Equal(CliConfig.DefaultDisconnectLineRegex, cfg.DisconnectLineRegex);
     }
+
+    [Fact]
+    public void MaxPlayersIsOffByDefaultAndClamped()
+    {
+        using var s = new Scratch();
+        Assert.Equal(0, Configs.Parse(s.Dir).MaxPlayers);
+        Assert.Equal(10, Configs.Parse(s.Dir, "--max-players", "10").MaxPlayers);
+        Assert.Equal(0, Configs.Parse(s.Dir, "--max-players", "-3").MaxPlayers);
+        Assert.Equal(0, Configs.Parse(s.Dir, "--max-players", "ten").MaxPlayers);
+        Assert.Equal(10000, Configs.Parse(s.Dir, "--max-players", "999999").MaxPlayers);
+        Assert.DoesNotContain(Configs.Parse(s.Dir, "--max-players", "10").Warnings, w => w.Contains("unknown setting"));
+    }
 }
