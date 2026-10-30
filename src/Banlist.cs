@@ -29,6 +29,13 @@ public sealed class Banlist : IDisposable
     // join detection is blind.
     static readonly TimeSpan BlindJoinGrace = TimeSpan.FromMinutes(3);
 
+    // A joiner logs its join line well before A2S counts it (about 25 s in one measured join),
+    // so a roster entry younger than this cannot be checked against A2S yet.
+    static readonly TimeSpan RosterConfirmGrace = TimeSpan.FromMinutes(3);
+
+    // A2S must report an empty server for this long before entries with no leave line are dropped.
+    static readonly TimeSpan A2SEmptyFor = TimeSpan.FromSeconds(60);
+
     readonly SteamIdListFile<Ban> _store;
     readonly ServerProcess _server;
     readonly MessageBuffer _buffer;
@@ -40,6 +47,9 @@ public sealed class Banlist : IDisposable
     readonly Dictionary<string, Player> _online = new(StringComparer.Ordinal);
     DateTime? _a2sPlayersSince;
     bool _blindWarned;
+    DateTime? _a2sEmptySince;
+    DateTime? _lastA2SAt;
+    int _lastA2SPlayers;
 
     // Test seam for the blind-join grace period.
     internal Func<DateTime> Now { get; set; } = () => DateTime.UtcNow;
@@ -143,6 +153,8 @@ public sealed class Banlist : IDisposable
             _online.Clear();
             _a2sPlayersSince = null;
             _blindWarned = false;
+            _a2sEmptySince = null;
+            _lastA2SAt = null;
         }
     }
 
@@ -152,7 +164,14 @@ public sealed class Banlist : IDisposable
         var r = _parser.Classify(e.Line);
         if (r.Kind == PlayerLineParser.Kind.Join)
         {
-            var p = new Player(r.SteamId, r.Name, DateTime.UtcNow);
+            // Chat or a console echo shaped like a join. It takes no slot and no roster place; a ban check
+            // is still safe, because it can only kick the SteamID it names.
+            if (!r.Trusted)
+            {
+                if (IsBanned(r.SteamId)) TryKick(r.SteamId);
+                return;
+            }
+            var p = new Player(r.SteamId, r.Name, Now());
             // Players already on, the joiner left out, so a rejoin is not counted twice. The joiner still
             // enters the roster: its disconnected line clears it, and a kick that does not land is not undercounted.
             int alreadyOn;
@@ -161,14 +180,13 @@ public sealed class Banlist : IDisposable
                 alreadyOn = _online.Keys.Count(id => id != r.SteamId);
                 _online[r.SteamId] = p;
             }
-            if (IsBanned(r.SteamId)) TryKick(r.SteamId);
-            else if (_cfg.MaxPlayers > 0 && alreadyOn >= _cfg.MaxPlayers && !(RefusedElsewhere?.Invoke(r.SteamId) ?? false))
-                KickFull(r.SteamId, alreadyOn);
-            else
+            if (IsBanned(r.SteamId)) { TryKick(r.SteamId); return; }
+            if (_cfg.MaxPlayers > 0 && alreadyOn >= _cfg.MaxPlayers && !(RefusedElsewhere?.Invoke(r.SteamId) ?? false))
             {
-                try { OnPlayerJoin?.Invoke(p); } catch { }
-                _ = _discord.SendAsync("Player joined", $"{DiscordWebhook.Quote(DisplayName(r.Name, r.SteamId))} connected.", DiscordWebhook.ColorBlue);
+                if (ConfirmFull(r.SteamId, alreadyOn)) { KickFull(r.SteamId, alreadyOn); return; }
             }
+            try { OnPlayerJoin?.Invoke(p); } catch { }
+            _ = _discord.SendAsync("Player joined", $"{DiscordWebhook.Quote(DisplayName(r.Name, r.SteamId))} connected.", DiscordWebhook.ColorBlue);
         }
         else if (r.Kind == PlayerLineParser.Kind.Leave)
         {
@@ -195,20 +213,68 @@ public sealed class Banlist : IDisposable
     public void ObserveA2SPlayers(int players)
     {
         string? warning = null;
+        List<string>? dropped = null;
         lock (_lock)
         {
-            if (players <= 0 || _online.Count > 0) { _a2sPlayersSince = null; return; }
             var now = Now();
-            _a2sPlayersSince ??= now;
-            if (!_blindWarned && now - _a2sPlayersSince.Value >= BlindJoinGrace)
+            _lastA2SPlayers = players;
+            _lastA2SAt = now;
+            // An empty server has no players: entries left behind by a missed leave line go, but not
+            // anyone young enough to still be loading in.
+            if (players > 0) _a2sEmptySince = null;
+            else
             {
-                _blindWarned = true;
-                warning = $"warn: A2S reports {players} player(s) but no join line has matched --connect-regex; the player roster, bans and the allowlist cannot see who joins on this server build";
+                _a2sEmptySince ??= now;
+                if (now - _a2sEmptySince.Value >= A2SEmptyFor)
+                {
+                    dropped = _online.Values.Where(p => now - p.SeenAt >= RosterConfirmGrace).Select(p => p.SteamId).ToList();
+                    foreach (var id in dropped) _online.Remove(id);
+                }
             }
+            if (players <= 0 || _online.Count > 0) _a2sPlayersSince = null;
+            else
+            {
+                _a2sPlayersSince ??= now;
+                if (!_blindWarned && now - _a2sPlayersSince.Value >= BlindJoinGrace)
+                {
+                    _blindWarned = true;
+                    warning = $"warn: A2S reports {players} player(s) but no join line has matched --connect-regex; the player roster, bans and the allowlist cannot see who joins on this server build";
+                }
+            }
+        }
+        if (dropped is { Count: > 0 })
+        {
+            _buffer.Append("system", $"A2S reports an empty server: removed {dropped.Count} player(s) from the roster that had no leave line");
+            _audit.Record("roster_cleared", new Dictionary<string, object?> { ["steamids"] = string.Join(",", dropped), ["count"] = dropped.Count });
         }
         if (warning is null) return;
         _buffer.Append("system", warning);
         _audit.Record("join_detection_blind", new Dictionary<string, object?> { ["a2s_players"] = players });
+    }
+
+    // The roster says the server is full. A wrong "Server is full." costs a real player the join, so ask A2S
+    // too: players it counts, plus entries too young for it to have counted. No recent A2S answer: the roster stands.
+    bool ConfirmFull(string joiner, int alreadyOn)
+    {
+        int a2s, recent;
+        lock (_lock)
+        {
+            var now = Now();
+            if (_lastA2SAt is null || now - _lastA2SAt.Value > TimeSpan.FromSeconds(Math.Max(30, _cfg.QueryPollSeconds) * 3)) return true;
+            a2s = _lastA2SPlayers;
+            recent = _online.Values.Count(p => p.SteamId != joiner && now - p.SeenAt < RosterConfirmGrace);
+        }
+        if (a2s + recent >= _cfg.MaxPlayers) return true;
+        _buffer.Append("system", $"warn: the roster shows {alreadyOn} player(s) but A2S counts {a2s}; letting {joiner} in");
+        _audit.Record("full_kick_skipped", new Dictionary<string, object?>
+        {
+            ["steamid"] = joiner,
+            ["players"] = alreadyOn,
+            ["a2s_players"] = a2s,
+            ["recent"] = recent,
+            ["max_players"] = _cfg.MaxPlayers,
+        });
+        return false;
     }
 
     void KickFull(string steamId, int alreadyOn)

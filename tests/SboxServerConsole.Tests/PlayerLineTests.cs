@@ -37,6 +37,118 @@ public class PlayerLineTests : IDisposable
         var r = _p.Classify($"Joe [{Real}] is connecting");
         Assert.Equal(PlayerLineParser.Kind.Join, r.Kind);
         Assert.Equal("Joe", r.Name);
+        Assert.False(r.Trusted);
+    }
+
+    [Fact]
+    public void TheEnginesOwnJoinLineIsTrusted()
+    {
+        var r = _p.Classify($"01:20:36 Generic  Joe The Builder [{Real}] is connecting");
+        Assert.True(r.Trusted);
+        // sbox pads its output lines.
+        Assert.True(_p.Classify($"01:20:36 Generic  Joe [{Real}] is connecting                 ").Trusted);
+    }
+
+    // What a dedicated server logs for chat: "<name>: <message>". The message is the player's own text.
+    [Theory]
+    [InlineData("01:20:36 Generic  Joe: x [76561198000000002] is connecting")]
+    [InlineData("01:20:36 Generic  Joe: [76561198000000002] is connecting")]
+    [InlineData("01:20:36 Generic  Joe: 01:20:36 Generic  x [76561198000000002] is connecting")]
+    [InlineData("01:20:36 Generic  Server: x [76561198000000002] is connecting")]
+    public void AChatLineShapedLikeAJoinIsNotTrusted(string line)
+    {
+        var r = _p.Classify(line);
+        Assert.Equal(PlayerLineParser.Kind.Join, r.Kind);
+        Assert.False(r.Trusted);
+    }
+
+    [Theory]
+    [InlineData("01:20:36 Generic  Joe: x [76561198000000002] disconnected")]
+    [InlineData("01:20:36 Generic  Joe: [76561198000000002] disconnected")]
+    [InlineData("01:20:36 Generic  Joe: SteamIdSocket - steamid:1: Disconnection (76561198000000002)")]
+    [InlineData("> x [76561198000000002] disconnected")]
+    public void AChatLineOrEchoShapedLikeALeaveIsIgnored(string line)
+    {
+        Assert.Equal(PlayerLineParser.Kind.None, _p.Classify(line).Kind);
+    }
+
+    // What the console echoes when a command is typed; seen on a real server.
+    [Fact]
+    public void ATypedCommandEchoIsNotTrusted()
+    {
+        Assert.False(_p.Classify($"> LabStandIn [{Victim}] is connecting").Trusted);
+    }
+
+    // A display name is the player's own text too, printed by every line that names them.
+    [Fact]
+    public void ANameHoldingAJoinIsNotAJoinInTheirChat()
+    {
+        var r = _p.Classify($"01:20:36 Generic  a [{Victim}] is connecting: hello");
+        Assert.False(r.Kind == PlayerLineParser.Kind.Join && r.Trusted);
+    }
+
+    [Fact]
+    public void ANameHoldingAJoinIsNotAJoinInAKickNotice()
+    {
+        var r = _p.Classify($"01:20:36 Generic  Kicked a [{Victim}] is connecting [{Real}] - bad password");
+        Assert.False(r.Kind == PlayerLineParser.Kind.Join && r.Trusted);
+    }
+
+    [Fact]
+    public void ANameHoldingALeaveIsNotALeaveInTheirChat()
+    {
+        Assert.NotEqual(PlayerLineParser.Kind.Leave, _p.Classify($"01:20:36 Generic  a [{Victim}] disconnected: hello").Kind);
+    }
+
+    [Fact]
+    public void ANameHoldingAJoinStillJoinsAsThemselves()
+    {
+        var r = _p.Classify($"01:20:36 Generic  a [{Victim}] is connecting [{Real}] is connecting");
+        Assert.Equal(PlayerLineParser.Kind.Join, r.Kind);
+        Assert.Equal(Real, r.SteamId);
+        Assert.True(r.Trusted);
+    }
+
+    [Fact]
+    public void ANameHoldingALeaveStillLeavesAsThemselves()
+    {
+        var r = _p.Classify($"01:20:36 Generic  a [{Victim}] disconnected [{Real}] disconnected");
+        Assert.Equal(PlayerLineParser.Kind.Leave, r.Kind);
+        Assert.Equal(Real, r.SteamId);
+    }
+
+    // The console redraw can split a log line after its prefix; seen on a real server.
+    [Fact]
+    public void AJoinSplitAfterItsPrefixIsTrustedAndKeepsTheWholeName()
+    {
+        Assert.Equal(PlayerLineParser.Kind.None, _p.Classify("01:20:36 Generic").Kind);
+        var r = _p.Classify($" Joe The Builder [{Real}] is connecting");
+        Assert.Equal(PlayerLineParser.Kind.Join, r.Kind);
+        Assert.True(r.Trusted);
+        Assert.Equal("Joe The Builder", r.Name);
+    }
+
+    [Fact]
+    public void ASplitOnlyCoversTheVeryNextLine()
+    {
+        _p.Classify("01:20:36 Generic");
+        _p.Classify("something else");
+        Assert.False(_p.Classify($"Joe [{Real}] is connecting").Trusted);
+    }
+
+    [Fact]
+    public void AChatLineSplitAfterItsPrefixIsStillNotTrusted()
+    {
+        _p.Classify("01:20:36 Generic");
+        Assert.False(_p.Classify($"Joe: x [{Victim}] is connecting").Trusted);
+    }
+
+    [Fact]
+    public void ACustomRegexIsTakenAtItsWord()
+    {
+        var p = new PlayerLineParser(Configs.Parse(_s.Dir, "--connect-regex", @"(?<steamid>\d{17}) joined", "--disconnect-regex", @"(?<steamid>\d{17}) left: \w+"));
+        Assert.True(p.Classify($"{Real} joined").Trusted);
+        Assert.Equal(PlayerLineParser.Kind.Leave, p.Classify($"Joe: {Real} left: bye").Kind);
     }
 
     [Fact]
