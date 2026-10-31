@@ -495,6 +495,9 @@ public sealed class HttpApi : IDisposable
         sb.Append(",\"query_port\":").Append(_cfg.QueryPort);
         sb.Append(",\"execute_total\":").Append(executeTotal);
         sb.Append(",\"stream_clients_active\":").Append(streamClientsActive);
+        // The agent's own player limit (--max-players; 0 = none). A dedicated s&box server
+        // ignores +maxplayers, so server.max_players (from A2S) is the game's figure, not this one.
+        sb.Append(",\"player_limit\":").Append(_cfg.MaxPlayers);
         sb.Append(",\"server\":");
         if (info is null) sb.Append("null");
         else

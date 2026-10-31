@@ -60,13 +60,18 @@ kept deliberately; existing clients key off it. Do not rename it.
 {"child_alive":true,"child_pid":4567,"server_pid":4580,"child_uptime_sec":900,"child_memory_bytes":734003200,
  "child_cpu_seconds":"128.44","sidecar_uptime_sec":910,"buffer_capacity":500,
  "listen_port":27019,"child_port":27015,"query_port":27016,"execute_total":12,
- "stream_clients_active":1,
+ "stream_clients_active":1,"player_limit":10,
  "server":{"name":"My Server","map":"facepunch.datacore","folder":"sbox","game":"sbox",
            "players":3,"max_players":16,"bots":0,"fetched_at":"2026-04-26T20:14:00.000Z"}}
 ```
 
 `server` is the last A2S_INFO snapshot, or `null` when the poller is disabled
 (`--query-poll-sec 0`) or has not answered yet.
+
+`player_limit` is the agent's own limit, `--max-players` (`0` = none). A dedicated
+s&box server ignores `+maxplayers`, so `server.max_players` is what the game itself
+reports (32 for most games), not the limit the agent enforces. The dashboard shows
+`player_limit` when it is set.
 
 `child_pid` is the process the agent started. On Windows that is the PowerShell
 wrapper that gives the server its console; `server_pid` is the s&box server
