@@ -43,7 +43,7 @@ No auth required. Suitable for Docker/Kubernetes liveness probes.
 ### `GET /version`
 
 ```json
-{"sidecar":"SboxServerConsole","version":"1.4.1","child_pid":4567,"child_alive":true}
+{"sidecar":"SboxServerConsole","version":"1.6.0","child_pid":4567,"child_alive":true}
 ```
 
 No auth required, same as `/health`: version probes and upgrade checks run
