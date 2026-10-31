@@ -20,7 +20,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Full history: the unreleased-code check finds the last release tag with git describe,
+      # which a one-commit checkout cannot see.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -46,6 +50,17 @@ jobs:
             exit 1
           fi
           echo "CHANGELOG has a section for $version"
+
+      # Fails only on main, and only once shipped code has waited 24 hours for a release.
+      # A branch is unreleased by definition, so there it reports.
+      - name: Shipped code has a release carrying it
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            tools/ci/check-unreleased.sh
+          else
+            tools/ci/check-unreleased.sh --report
+          fi
 
       - name: Publish both targets
         run: |
@@ -84,7 +99,7 @@ jobs:
     # and the Windows service path.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-dotnet@v5
         with:
