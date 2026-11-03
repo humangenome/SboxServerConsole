@@ -258,6 +258,201 @@ public class EnforcementTests : IDisposable
         Assert.Empty(AuditOf("ban_kick"));
     }
 
+    // The log is untrusted input: a player types chat and picks a display name, and both land on the same output.
+    const string Dave = "76561198000000004";
+    const string Fake1 = "76561190000000001";
+    const string Fake2 = "76561190000000002";
+    static readonly DateTime T0 = new(2026, 10, 30, 12, 0, 0, DateTimeKind.Utc);
+
+    Banlist CappedBans(int max, out MutableClock clock)
+    {
+        var c = new MutableClock { At = T0 };
+        clock = c;
+        return new Banlist(Capped(max), _srv, _buf, _audit, _discord) { Now = () => c.At };
+    }
+
+    sealed class MutableClock { public DateTime At; }
+
+    [Fact]
+    public void ChatShapedLikeJoinsTakesNoSlots()
+    {
+        using var bans = CappedBans(2, out _);
+        for (int i = 0; i < 10; i++) _buf.Append("stdout", $"01:20:36 Generic  Eve: x [7656119000000{i:D4}] is connecting");
+        Assert.Empty(bans.Online());
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", Connecting("Sam", Bob));
+        Assert.Empty(AuditOf("full_kick"));
+        Assert.Equal(2, bans.Online().Count);
+    }
+
+    [Fact]
+    public void ChatShapedLikeALeaveTakesNoOneOff()
+    {
+        using var bans = CappedBans(2, out _);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        _buf.Append("stdout", $"01:21:00 Generic  Eve: x [{Alice}] disconnected");
+        _buf.Append("stdout", $"01:21:00 Generic  Eve: SteamIdSocket - steamid:1: Disconnection ({Alice})");
+        Assert.Equal(Alice, Assert.Single(bans.Online()).SteamId);
+    }
+
+    [Fact]
+    public void AConsoleEchoTakesNoSlot()
+    {
+        using var bans = CappedBans(1, out _);
+        _buf.Append("stdout", $"> LabStandIn [{Fake1}] is connecting");
+        Assert.Empty(bans.Online());
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        Assert.Empty(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void ACraftedNameCannotAddOrRemoveAnyoneElse()
+    {
+        using var bans = CappedBans(1, out _);
+        _buf.Append("stdout", Connecting("Sam", Alice));
+        // Their chat, with a name holding the words.
+        _buf.Append("stdout", $"01:21:00 Generic  a [{Fake1}] is connecting: hello");
+        _buf.Append("stdout", $"01:21:00 Generic  a [{Alice}] disconnected: hello");
+        Assert.Equal(Alice, Assert.Single(bans.Online()).SteamId);
+        Assert.Empty(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void ACraftedNameIsListedUnderTheirOwnIdAndLeavesUnderIt()
+    {
+        using var bans = CappedBans(3, out _);
+        _buf.Append("stdout", $"01:21:00 Generic  a [{Fake1}] is connecting [{Alice}] is connecting");
+        Assert.Equal(Alice, Assert.Single(bans.Online()).SteamId);
+        _buf.Append("stdout", $"01:22:00 Generic  a [{Fake1}] is connecting [{Alice}] disconnected");
+        Assert.Empty(bans.Online());
+    }
+
+    [Fact]
+    public void AColonInARealNameMeansABriefOverfillNotARefusal()
+    {
+        using var bans = CappedBans(1, out _);
+        _buf.Append("stdout", Connecting("Joe: The Great", Alice));
+        Assert.Empty(bans.Online());
+        _buf.Append("stdout", Connecting("Sam", Bob));
+        Assert.Empty(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void AFakedLineStillKicksOnlyABannedId()
+    {
+        using var bans = CappedBans(1, out _);
+        bans.Add(Bob, "griefing", "test");
+        _buf.Append("stdout", $"01:20:36 Generic  Eve: x [{Bob}] is connecting");
+        _buf.Append("stdout", $"01:20:36 Generic  Eve: x [{Alice}] is connecting");
+        // Adding the ban sends its own kick, so the faked line makes two, both for the banned ID.
+        Assert.All(AuditOf("ban_kick"), e => Assert.Equal(Bob, e.GetProperty("steamid").GetString()));
+        Assert.Equal(2, AuditOf("ban_kick").Count);
+        Assert.Empty(bans.Online());
+    }
+
+    [Fact]
+    public void AMissedLeaveIsClearedOnceA2SSaysTheServerIsEmpty()
+    {
+        using var bans = CappedBans(1, out var clock);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        clock.At = T0.AddMinutes(4);
+        bans.ObserveA2SPlayers(0);
+        Assert.Single(bans.Online());
+        clock.At = T0.AddMinutes(5);
+        bans.ObserveA2SPlayers(0);
+        Assert.Empty(bans.Online());
+        Assert.Equal(Alice, Assert.Single(AuditOf("roster_cleared")).GetProperty("steamids").GetString());
+        _buf.Append("stdout", Connecting("Sam", Bob));
+        Assert.Empty(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void APlayerStillLoadingIsNotClearedByAnEmptyA2S()
+    {
+        using var bans = CappedBans(1, out var clock);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        clock.At = T0.AddSeconds(30);
+        bans.ObserveA2SPlayers(0);
+        clock.At = T0.AddSeconds(100);
+        bans.ObserveA2SPlayers(0);
+        Assert.Single(bans.Online());
+        Assert.Empty(AuditOf("roster_cleared"));
+    }
+
+    [Fact]
+    public void A2SHasToStayEmptyToClear()
+    {
+        using var bans = CappedBans(1, out var clock);
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        clock.At = T0.AddMinutes(4);
+        bans.ObserveA2SPlayers(0);
+        clock.At = T0.AddMinutes(4.5);
+        bans.ObserveA2SPlayers(1);
+        clock.At = T0.AddMinutes(5);
+        bans.ObserveA2SPlayers(0);
+        Assert.Single(bans.Online());
+    }
+
+    [Fact]
+    public void AMissedLeaveWithOthersOnDoesNotRefuseARealJoiner()
+    {
+        using var bans = CappedBans(2, out var clock);
+        _buf.Append("stdout", Connecting("Gone", Alice));   // its leave line never came
+        _buf.Append("stdout", Connecting("Here", Bob));
+        clock.At = T0.AddMinutes(4);
+        bans.ObserveA2SPlayers(1);
+        _buf.Append("stdout", Connecting("New", Carol));
+        Assert.Empty(AuditOf("full_kick"));
+        var skip = Assert.Single(AuditOf("full_kick_skipped"));
+        Assert.Equal(1, skip.GetProperty("a2s_players").GetInt32());
+        Assert.Contains(bans.Online(), p => p.SteamId == Carol);
+    }
+
+    [Fact]
+    public void AServerA2SAgreesIsFullStillRefuses()
+    {
+        using var bans = CappedBans(2, out var clock);
+        _buf.Append("stdout", Connecting("One", Alice));
+        _buf.Append("stdout", Connecting("Two", Bob));
+        clock.At = T0.AddMinutes(4);
+        bans.ObserveA2SPlayers(2);
+        _buf.Append("stdout", Connecting("New", Carol));
+        Assert.Single(AuditOf("full_kick"));
+        Assert.Empty(AuditOf("full_kick_skipped"));
+    }
+
+    [Fact]
+    public void PlayersStillLoadingCountBeforeA2SSeesThem()
+    {
+        using var bans = CappedBans(2, out var clock);
+        _buf.Append("stdout", Connecting("One", Alice));
+        _buf.Append("stdout", Connecting("Two", Bob));
+        clock.At = T0.AddSeconds(10);
+        bans.ObserveA2SPlayers(0);
+        _buf.Append("stdout", Connecting("New", Carol));
+        Assert.Single(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void WithNoA2STheRosterStands()
+    {
+        using var bans = CappedBans(1, out _);
+        _buf.Append("stdout", Connecting("One", Alice));
+        _buf.Append("stdout", Connecting("New", Bob));
+        Assert.Single(AuditOf("full_kick"));
+    }
+
+    [Fact]
+    public void AStaleA2SIsNotBelieved()
+    {
+        using var bans = CappedBans(1, out var clock);
+        bans.ObserveA2SPlayers(0);
+        _buf.Append("stdout", Connecting("One", Alice));
+        clock.At = T0.AddMinutes(10);
+        _buf.Append("stdout", Connecting("New", Bob));
+        Assert.Single(AuditOf("full_kick"));
+    }
+
     [Fact]
     public void ARejoinIsNotCountedTwice()
     {

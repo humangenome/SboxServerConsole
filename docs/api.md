@@ -169,6 +169,20 @@ roster is kicked with the reason `Server is full.` (the `--kick-command` with th
 reason added). A dedicated s&box server ignores `+maxplayers`. A banned joiner, or
 one the allowlist refuses, gets only that kick.
 
+The server's output is untrusted input: chat and display names land on it too. With
+the default regexes, only the engine's own lines change the roster: the time prefix,
+nothing shaped like chat (`name: message`) or a typed command before the SteamID, and
+nothing after `is connecting` or `disconnected`. A player with `: ` in their name is
+therefore not listed or counted. A join line that fails this check can still kick a
+banned SteamID, and nothing else.
+
+Before refusing a joiner the agent also checks A2S: the players it counts, plus roster
+entries younger than three minutes (a joiner logs its join line before A2S counts it).
+Under the limit, the joiner gets in, with a console warning and a `full_kick_skipped`
+audit entry. With no A2S answer in the last three polls, the roster alone decides.
+When A2S reports an empty server for a minute, roster entries older than three minutes
+are dropped, with a `roster_cleared` audit entry.
+
 `a2s_players` is the authoritative roster the child reports over A2S_PLAYER on
 `--query-port`. It carries no steamids; the A2S protocol does not return them.
 
