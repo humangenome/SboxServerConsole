@@ -84,6 +84,17 @@ public class HttpApiTests
         Assert.False(v.GetProperty("child_alive").GetBoolean());
     }
 
+    // A dedicated s&box server ignores +maxplayers and A2S reports the game's own figure, so
+    // /status carries the agent's limit separately; the dashboard shows it when it is set.
+    [Fact]
+    public async Task StatusCarriesTheAgentsPlayerLimit()
+    {
+        using (var none = ApiHost.Create())
+            Assert.Equal(0, (await none.Json("GET", "/status")).GetProperty("player_limit").GetInt32());
+        using var capped = ApiHost.Create("--max-players", "10");
+        Assert.Equal(10, (await capped.Json("GET", "/status")).GetProperty("player_limit").GetInt32());
+    }
+
     [Fact]
     public void SidecarKeyIsStillInTheSource()
     {

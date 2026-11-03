@@ -347,7 +347,7 @@
     const mb = (h.child_memory_bytes || 0) / 1048576;
     const srv = h.server;
     metricsEl.innerHTML = `
-      <div><b>server</b> ${srv ? `${escapeHtml(srv.name)} · ${srv.players}/${srv.max_players} players${srv.map ? " · " + escapeHtml(srv.map) : ""}` : "no A2S answer yet"}</div>
+      <div><b>server</b> ${srv ? `${escapeHtml(srv.name)} · ${srv.players}/${h.player_limit > 0 ? h.player_limit : srv.max_players} players${srv.map ? " · " + escapeHtml(srv.map) : ""}` : "no A2S answer yet"}</div>
       <div><b>process</b> ${h.child_alive ? `${mb.toFixed(0)} MB · ${escapeHtml(String(h.child_cpu_seconds))} CPU s` : "stopped"}</div>
       <div><b>agent</b> up ${formatUptime(h.sidecar_uptime_sec)} · ${h.execute_total} commands · ${h.stream_clients_active} live viewer(s)</div>
     `;

@@ -89,7 +89,7 @@ steamcmd +force_install_dir "C:\sbox-server" +login anonymous +app_update 189293
 ./steamcmd.sh +force_install_dir /opt/sbox-server +login anonymous +app_update 1892930 validate +quit
 ```
 
-The server's command line goes in `child-args`. SboxServerConsole splits it into arguments itself: double quotes group words (`+hostname "My Server"`) and every other character reaches the server as written. The flags SboxServerConsole reads are `+port` (game port) and `+net_query_port` (A2S port; the server uses 27016 when it is left out). `+game <package> [map]` picks what to run, and `+net_game_server_token <token>` gives the server a fixed SteamID ([register one](https://steamcommunity.com/dev/managegameservers) with app ID `1892930`). Facepunch's [dedicated server guide](https://sbox.game/dev/doc/networking/dedicated-servers) lists the rest.
+The server's command line goes in `child-args`. SboxServerConsole splits it into arguments itself: double quotes group words (`+hostname "My Server"`) and every other character reaches the server as written. The flags SboxServerConsole reads are `+port` (game port) and `+net_query_port` (A2S port; the server uses 27016 when it is left out). `+game <package> [map]` picks what to run, `+net_game_server_token <token>` gives the server a fixed SteamID ([register one](https://steamcommunity.com/dev/managegameservers) with app ID `1892930`), and `+sv_password <password>` makes players give a password to join (s&box 26.10.27 and later). Facepunch's [dedicated server guide](https://sbox.game/dev/doc/networking/dedicated-servers) lists the rest.
 
 ### Windows (x64)
 
@@ -165,7 +165,7 @@ Lifecycle calls (`POST /server/start`, `/server/stop`, `/server/restart`) contro
 
 | Port (defaults for game port 27015) | Protocol | What |
 |---|---|---|
-| 27015 | UDP | Game traffic (`+port`) |
+| 27015 | UDP | Game traffic (`+port`). With the server's default `net_hide_address` on, players come in through Steam's relay by the server's SteamID and nothing listens on this port |
 | 27016 | UDP | A2S query (`+net_query_port`, or 27016 when not set) |
 | 27019 | TCP | HTTP API, dashboard and live console (game port + 4) |
 | 27020 | TCP | Source RCON (game port + 5) |
