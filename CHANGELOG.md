@@ -4,12 +4,17 @@ All notable changes to SboxServerConsole are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.1] - 2026-11-03
 
 ### Fixed
 
 - **Chat could fill the player limit.** A dedicated server logs every chat line to its console, so a chat message shaped like a join line counted as a player and held a slot until the server stopped. Only the engine's own join line now counts: its time prefix, nothing shaped like chat or a typed command before the SteamID, and nothing after the closing words. A display name holding those words is treated the same way. Leave lines get the same check, so chat cannot take a player off the roster. A faked join line can still trigger a ban check, which can only kick the SteamID it names.
-- **A missed leave line could refuse real players.** A roster entry with no leave line held its slot until the server stopped. When A2S reports an empty server for a minute, entries older than three minutes now go. Before refusing a joiner, the agent also asks A2S: the players it counts, plus roster entries too young for it to have counted. If that is under the limit the joiner gets in, with a console warning and a `full_kick_skipped` audit entry. With no recent A2S answer the roster stands. A wrong refusal is worse than a brief overfill, so a player with `: ` in their name is not counted.
+- **A missed leave line could refuse real players.** A roster entry with no leave line held its slot until the server stopped. When A2S reports an empty server for a minute, entries older than a minute now go. Before refusing a joiner, the agent also asks A2S: the players it counts, plus roster entries too young for it to have counted. If that is under the limit the joiner gets in, with a console warning and a `full_kick_skipped` audit entry. With no recent A2S answer the roster stands. A wrong refusal is worse than a brief overfill, so a player with `: ` in their name is not counted.
+- **Would not start on some Windows builds.** .NET marks every program as CET-compatible by default, and some Windows builds refuse to start such a program ("Your Windows doesn't fully support CET"). `SboxServerConsole.exe` is no longer marked that way.
+
+### Added
+
+- **`/status` shows the player limit.** `player_limit` is the agent's own `max-players` (`0` = none), and the dashboard counts players against it instead of the game's advertised 32.
 
 ## [1.6.0] - 2026-10-29
 
