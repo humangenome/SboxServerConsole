@@ -84,6 +84,12 @@ jobs:
           cp -r examples stage/examples
           tar -czf SboxServerConsole-linux-x64.tar.gz -C stage .
 
+      # .NET 10 refuses to start an exe marked CET-compatible on a machine whose CPU has CET but whose
+      # Windows build only partly supports it ("Your Windows doesn't fully support CET"). Directory.Build.props
+      # sets CETCompat=false; prove the exe published on its own and the one inside the zip carry it off.
+      - name: The Windows exe is not marked CET-compatible
+        run: python3 scripts/check-cet-compat.py publish/win-x64/SboxServerConsole.exe "SboxServerConsole-win-x64.zip!SboxServerConsole.exe"
+
       - name: Checksums
         run: |
           set -euo pipefail

@@ -10,6 +10,11 @@
          the exact string PathMap exists to keep out — plus the repository URL
          and commit. Shipped .pdb files carry all of it, so it stays off. -->
     <EnableSourceLink>false</EnableSourceLink>
+    <!-- .NET 9 and later mark every exe CET-compatible (hardware shadow stacks) by default. Such an exe
+         refuses to start on some Windows builds whose CPU has CET but whose OS only partly supports it
+         ("Your Windows doesn't fully support CET"). Off here; CI and the release read the flag from the
+         published Windows exe with scripts/check-cet-compat.py. -->
+    <CETCompat>false</CETCompat>
   </PropertyGroup>
 
   <!-- Assertion for the PathMap above: fail any Release build whose output

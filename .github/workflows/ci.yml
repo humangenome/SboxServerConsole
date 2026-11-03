@@ -55,6 +55,11 @@ jobs:
           dotnet publish src/SboxServerConsole.csproj -c Release -r linux-x64 \
             --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/linux-x64
 
+      # A Windows exe marked CET-compatible refuses to start on some Windows builds. Directory.Build.props
+      # turns the flag off; this reads it from the published exe.
+      - name: The Windows exe is not marked CET-compatible
+        run: python3 scripts/check-cet-compat.py publish/win-x64/SboxServerConsole.exe
+
       - name: Leak gate on shipped binaries
         shell: bash
         run: |
