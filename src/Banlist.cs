@@ -29,9 +29,10 @@ public sealed class Banlist : IDisposable
     // join detection is blind.
     static readonly TimeSpan BlindJoinGrace = TimeSpan.FromMinutes(3);
 
-    // A joiner logs its join line well before A2S counts it (about 25 s in one measured join),
-    // so a roster entry younger than this cannot be checked against A2S yet.
-    static readonly TimeSpan RosterConfirmGrace = TimeSpan.FromMinutes(3);
+    // A joiner logs its join line before A2S counts it (about 25 s in one measured join, 18 s in another),
+    // and A2S is polled every 30 s, so a roster entry younger than this cannot be checked against A2S yet.
+    // Kept short: a forged join line can hold a slot only this long.
+    static readonly TimeSpan RosterConfirmGrace = TimeSpan.FromSeconds(60);
 
     // A2S must report an empty server for this long before entries with no leave line are dropped.
     static readonly TimeSpan A2SEmptyFor = TimeSpan.FromSeconds(60);

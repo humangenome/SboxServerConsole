@@ -370,10 +370,11 @@ public class EnforcementTests : IDisposable
     public void APlayerStillLoadingIsNotClearedByAnEmptyA2S()
     {
         using var bans = CappedBans(1, out var clock);
-        _buf.Append("stdout", Connecting("Joe", Alice));
-        clock.At = T0.AddSeconds(30);
+        clock.At = T0.AddSeconds(-10);
         bans.ObserveA2SPlayers(0);
-        clock.At = T0.AddSeconds(100);
+        clock.At = T0;
+        _buf.Append("stdout", Connecting("Joe", Alice));
+        clock.At = T0.AddSeconds(55);
         bans.ObserveA2SPlayers(0);
         Assert.Single(bans.Online());
         Assert.Empty(AuditOf("roster_cleared"));
