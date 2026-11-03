@@ -77,12 +77,25 @@ jobs:
 
       - name: Leak gate on shipped binaries
         shell: bash
+        env:
+          LEAK_GATE_WORDS: ${{ secrets.LEAK_GATE_WORDS }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -euo pipefail
           # Log literals and embedded resources land in the binary's string table.
           # Nothing about a private deployment, a host address, or a hosting panel
           # may ship inside a public artifact.
-          pattern='sspanel|passrcon|gameserverid|b-cdn\.net|bitbucket\.org|survivalservers\.com/games/|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{4,5}'
+          # A host address with a port is never allowed. Deployment-specific words come from the
+          # LEAK_GATE_WORDS repository secret (one regex alternation), so this public file names none.
+          pattern='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{4,5}'
+          if [ -n "${LEAK_GATE_WORDS:-}" ]; then
+            pattern="$pattern|$LEAK_GATE_WORDS"
+          elif [ "${IS_FORK_PR:-false}" = "true" ]; then
+            echo "::notice::LEAK_GATE_WORDS is not available to pull requests from forks; checking addresses only"
+          else
+            echo "::error::the LEAK_GATE_WORDS repository secret is missing"
+            exit 1
+          fi
           fail=0
           for f in publish/win-x64/SboxServerConsole.exe publish/linux-x64/SboxServerConsole; do
             echo "--- $f"
