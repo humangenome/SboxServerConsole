@@ -111,6 +111,21 @@ jobs:
           [ "$fail" -eq 0 ] && echo "leak gate clean"
           exit "$fail"
 
+  windows-throttle-tests:
+    # The unit tests above run on Linux. The wrong-password limit is the one piece of
+    # them with no platform code at all; it runs on Windows too.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Wrong-password limit tests
+        timeout-minutes: 10
+        run: dotnet test tests/SboxServerConsole.Tests/SboxServerConsole.Tests.csproj --filter "FullyQualifiedName~Throttle" -warnaserror
+
   windows-smoke:
     # The unit tests run on Linux. This runs the published exe on Windows, with
     # cmd.exe standing in for the server, to cover ConPTY, the job object, HTTP.sys
