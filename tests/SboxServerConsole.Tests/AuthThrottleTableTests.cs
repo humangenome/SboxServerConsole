@@ -81,4 +81,18 @@ public class AuthThrottleTableTests
         Assert.True(th.IsLockedOut(Addr(0)));
         Assert.True(th.IsLockedOut(Addr(TableCeiling - 2)));
     }
+
+    [Fact]
+    public void ATableFullOfLockoutsLogsOneLineWithNoAddressInIt()
+    {
+        var t = Start;
+        var th = new AuthThrottle(() => t);
+        for (int i = 0; i < TableLimit; i++) LockOut(th, Addr(i));
+        Assert.Null(th.TakeNotice());
+
+        for (int i = TableLimit; i < TableLimit + 600; i++) LockOut(th, Addr(i));
+        Assert.Equal("auth table full: all 4096 tracked addresses are locked out; every lockout is kept (up to 65536)",
+            th.TakeNotice());
+        Assert.Null(th.TakeNotice());
+    }
 }

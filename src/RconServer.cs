@@ -146,6 +146,7 @@ public sealed class RconServer : IDisposable
                     if (ok) _throttle.RecordSuccess(remoteAddress);
                     else if (_throttle.RecordFailure(remoteAddress))
                         _buffer.Append("system", $"rcon: {remoteAddress} locked out for {AuthThrottle.Lockout.TotalMinutes:0} minutes after {AuthThrottle.MaxFailures} wrong passwords");
+                    if (_throttle.TakeNotice() is { } tableNotice) _buffer.Append("system", "rcon: " + tableNotice);
                     // mcrcon expects the empty mirror RESPONSE_VALUE before AUTH_RESPONSE.
                     SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "");
                     SendPacket(net, ok ? id : -1, SERVERDATA_AUTH_RESPONSE, "");

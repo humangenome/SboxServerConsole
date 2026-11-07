@@ -166,6 +166,7 @@ public sealed class HttpApi : IDisposable
         {
             if (_throttle.RecordFailure(remote))
                 _buffer.Append("system", $"http: {remote} locked out for {AuthThrottle.Lockout.TotalMinutes:0} minutes after {AuthThrottle.MaxFailures} wrong passwords");
+            if (_throttle.TakeNotice() is { } tableNotice) _buffer.Append("system", "http: " + tableNotice);
             Write(ctx, 401, "application/json", "{\"error\":\"unauthorized\"}");
             return;
         }
