@@ -36,8 +36,15 @@ public sealed class PlayerLineParser
 
     bool _afterBarePrefix;
 
-    // SteamID64: the only form the default connect regex can capture.
-    static readonly Regex SteamId64 = new(@"^\d{17}$", RegexOptions.CultureInvariant);
+    // SteamID64: the only form the default connect regex can capture. A person's account is exactly 17 ASCII digits from
+    // 76561197960265729 (account 1) to 76561202255233023 (account 4,294,967,295), so the newer IDs that start 7656120 pass.
+    // ASCII only: .NET's \d also matches other scripts' digits. Same length, digits only: comparing the text compares the numbers.
+    internal static bool IsSteamId64(string? id)
+    {
+        if (id is null || id.Length != 17) return false;
+        foreach (var c in id) if (c is < '0' or > '9') return false;
+        return string.CompareOrdinal(id, "76561197960265729") >= 0 && string.CompareOrdinal(id, "76561202255233023") <= 0;
+    }
 
     readonly Regex? _connect;
     readonly Regex? _disconnect;
@@ -129,7 +136,7 @@ public sealed class PlayerLineParser
         if (string.IsNullOrWhiteSpace(id)) { error = "steamid required"; return false; }
         if (UsesDefaultConnectRegex)
         {
-            if (SteamId64.IsMatch(id)) return true;
+            if (IsSteamId64(id)) return true;
             error = "steamid must be a 17-digit SteamID64 (for example 76561197960287930)";
             return false;
         }

@@ -196,6 +196,15 @@ public class PlayerLineTests : IDisposable
     [InlineData("7656119800000000", false)]
     [InlineData("76561198000000001\nquit", false)]
     [InlineData("", false)]
+    [InlineData("76561197960265729", true)]   // account 1
+    [InlineData("76561200000000001", true)]   // a newer account: starts 7656120
+    [InlineData("76561202255233023", true)]   // the last account
+    [InlineData("76561197960265728", false)]  // account 0
+    [InlineData("76561202255233024", false)]  // past the last account
+    [InlineData("76561190000000001", false)]  // below account 1
+    [InlineData("\uFF17\uFF16\uFF15\uFF16\uFF11\uFF11\uFF19\uFF18\uFF10\uFF10\uFF10\uFF10\uFF10\uFF10\uFF10\uFF10\uFF11", false)]  // 17 fullwidth digits
+    [InlineData("\u0667\u0666\u0665\u0666\u0661\u0661\u0669\u0668\u0660\u0660\u0660\u0660\u0660\u0660\u0660\u0660\u0661", false)]  // 17 Arabic-Indic digits
+    [InlineData("7656119800000000\u0661", false)]  // one Arabic-Indic digit at the end
     public void OnlyASteamId64IsAcceptedWithTheDefaultRegex(string id, bool ok)
     {
         Assert.Equal(ok, _p.IsUsableId(id, out _));
