@@ -4,6 +4,16 @@ All notable changes to SboxServerConsole are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-11-12
+
+### Fixed
+
+- **A flood of new addresses could lift a lockout.** After 10 wrong passwords an address is locked out for 5 minutes, and the agent tracks up to 4,096 addresses. When that table filled, it emptied itself, so a locked-out address could try again at once. Now quiet addresses make room first, then the longest-quiet ones that are not locked out. A running lockout is never dropped to make room. If every tracked address is locked out, the table keeps them all, up to 65,536, and the console says so once.
+
+### Added
+
+- **Third-party notices.** The release archives now include the licence notices for the .NET runtime and Cronos, which are built into the program.
+
 ## [1.6.1] - 2026-11-04
 
 ### Fixed
