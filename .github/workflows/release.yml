@@ -19,7 +19,7 @@ jobs:
     # without needing a Windows runner.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -67,22 +67,32 @@ jobs:
           set -euo pipefail
           mkdir -p stage
 
-          # Windows zip: SboxServerConsole.exe + README/LICENSE + service installer scripts
+          # Windows zip: SboxServerConsole.exe + README/LICENSE/third-party notices + service installer scripts
           # (only the two install scripts: scripts/ also holds the maintainers' release checker)
           cp publish/win-x64/SboxServerConsole.exe stage/
-          cp README.md LICENSE stage/
+          cp README.md LICENSE THIRD-PARTY-NOTICES.txt stage/
           mkdir -p stage/scripts
           cp scripts/install-service.ps1 scripts/uninstall-service.ps1 stage/scripts/
           cp -r examples stage/examples
           (cd stage && zip -r ../SboxServerConsole-win-x64.zip .)
           rm -rf stage/* stage/.[!.]* 2>/dev/null || true
 
-          # Linux tar.gz: SboxServerConsole + README/LICENSE + systemd unit example
+          # Linux tar.gz: SboxServerConsole + README/LICENSE/third-party notices + systemd unit example
           cp publish/linux-x64/SboxServerConsole stage/
           chmod +x stage/SboxServerConsole
-          cp README.md LICENSE stage/
+          cp README.md LICENSE THIRD-PARTY-NOTICES.txt stage/
           cp -r examples stage/examples
           tar -czf SboxServerConsole-linux-x64.tar.gz -C stage .
+
+      # The runtime and every package are built into the single-file binary, so their licence notices ship with it:
+      # THIRD-PARTY-NOTICES.txt must carry each one's licence and notices file word for word (read from the packages
+      # this build restored), and both archives must carry it and LICENSE.
+      - name: The archives carry the licence and third-party notices
+        run: >-
+          python3 scripts/check-notices.py
+          --deps src/bin/Release/net10.0/win-x64/SboxServerConsole.deps.json
+          --deps src/bin/Release/net10.0/linux-x64/SboxServerConsole.deps.json
+          SboxServerConsole-win-x64.zip SboxServerConsole-linux-x64.tar.gz
 
       # .NET 10 refuses to start an exe marked CET-compatible on a machine whose CPU has CET but whose
       # Windows build only partly supports it ("Your Windows doesn't fully support CET"). Directory.Build.props
@@ -146,7 +156,7 @@ jobs:
     needs: build
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
@@ -163,7 +173,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
