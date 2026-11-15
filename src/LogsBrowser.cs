@@ -66,9 +66,11 @@ public sealed class LogsBrowser
     // Hidden files and dot-files are never listed or served, on any platform. When
     // --logs-dir points at the server folder they include the agent's own config,
     // which holds the RCON password, and token files. Windows reports dot-files as
-    // ordinary files, so the name check matters there.
+    // ordinary files, so the name check matters there. A link is never followed: its
+    // name passes every check above while it points at a file outside the root.
     static bool IsServable(string name, FileAttributes attributes)
-        => !name.StartsWith('.') && !attributes.HasFlag(FileAttributes.Hidden);
+        => !name.StartsWith('.') && !attributes.HasFlag(FileAttributes.Hidden)
+           && !attributes.HasFlag(FileAttributes.ReparsePoint);
 
     public string TailToString(string fullPath, int tailLines)
     {

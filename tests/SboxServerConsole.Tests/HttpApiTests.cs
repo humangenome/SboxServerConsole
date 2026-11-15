@@ -422,6 +422,27 @@ public class HttpApiTests
         Assert.Contains("four", body);
     }
 
+    [Fact]
+    public async Task LogsNeverFollowAFileLinkOutOfTheRoot()
+    {
+        using var scratch = new Scratch();
+        var logDir = Path.Combine(scratch.Dir, "logs");
+        Directory.CreateDirectory(logDir);
+        File.WriteAllText(Path.Combine(logDir, "server.log"), "real log\n");
+        var secret = Path.Combine(scratch.Dir, "secret.txt");
+        File.WriteAllText(secret, "TOP SECRET\n");
+        try { File.CreateSymbolicLink(Path.Combine(logDir, "linked.log"), secret); }
+        catch (Exception) { return; } // this machine cannot make links (Windows without the right); nothing to check
+
+        using var h = ApiHost.Create("--logs-dir", logDir);
+        var list = await h.Json("GET", "/logs");
+        var names = list.GetProperty("files").EnumerateArray().Select(f => f.GetProperty("name").GetString()).ToList();
+        Assert.Equal(new[] { "server.log" }, names);
+        var (status, body) = await h.Call("GET", "/logs/linked.log");
+        Assert.Equal(404, status);
+        Assert.DoesNotContain("TOP SECRET", body);
+    }
+
     [Theory]
     [InlineData("/logs/../secret.txt")]
     [InlineData("/logs/..%2Fsecret.txt")]
