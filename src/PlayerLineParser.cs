@@ -137,7 +137,7 @@ public sealed class PlayerLineParser
         if (UsesDefaultConnectRegex)
         {
             if (IsSteamId64(id)) return true;
-            error = "steamid must be a 17-digit SteamID64 (for example 76561197960287930)";
+            error = "steamid must be the SteamID64 of a personal Steam account: 17 digits, 0-9 (for example 76561197960287930)";
             return false;
         }
         if (id.Length > 64 || id.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))

@@ -200,10 +200,12 @@ DELETE /bans/<steamid>             remove a ban
 ```
 
 Persisted to `--banlist` if set; otherwise in-memory only. With the default
-`--connect-regex`, `steamid` must be a 17-digit SteamID64; anything else is
-answered `400`, because no join line could ever match it. A file that cannot be
-read at startup is kept as `<name>.unreadable-<timestamp>` and the agent starts
-with an empty list, so the next save never overwrites it.
+`--connect-regex`, `steamid` must be the SteamID64 of a personal Steam account:
+17 digits, 0-9, from `76561197960265729` to `76561202255233023` (IDs that start
+`7656120` included). Anything else is answered `400`, because no join line could
+ever match it. A file that cannot be read at startup is kept as
+`<name>.unreadable-<timestamp>` and the agent starts with an empty list, so the
+next save never overwrites it.
 
 ### Allows (allowlist / whitelist)
 

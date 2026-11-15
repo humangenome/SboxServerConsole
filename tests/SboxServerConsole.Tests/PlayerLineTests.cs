@@ -211,6 +211,15 @@ public class PlayerLineTests : IDisposable
     }
 
     [Fact]
+    public void ARefusedSeventeenDigitIdIsToldItMustBeAPersonalAccount()
+    {
+        // 17 digits but below account 1: "must be 17 digits" alone would not tell the operator what is wrong.
+        Assert.False(_p.IsUsableId("76561190000000001", out var error));
+        Assert.Contains("personal Steam account", error);
+        Assert.Contains("0-9", error);
+    }
+
+    [Fact]
     public void ACustomRegexAcceptsOtherIdForms()
     {
         var cfg = Configs.Parse(_s.Dir, "--connect-regex", @"(?<steamid>STEAM_\S+) joined");
