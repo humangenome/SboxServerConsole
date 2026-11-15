@@ -275,7 +275,9 @@ is clamped to 1-10000. Both routes `404` when `--logs-dir` is not configured.
 Name resolution is confined to `--logs-dir`; traversal outside it `404`s.
 Hidden files and files whose name starts with a dot are never listed or served,
 on any platform: when `--logs-dir` is the server folder they include agent
-config holding the RCON password.
+config holding the RCON password. Links (symbolic links, and on Windows any
+reparse point) are never listed or served either, since one can point outside
+`--logs-dir`.
 
 ## Status codes
 

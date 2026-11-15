@@ -173,7 +173,7 @@ Lifecycle calls (`POST /server/start`, `/server/stop`, `/server/restart`) contro
 - Both listeners bind `127.0.0.1` by default. To reach them from elsewhere, set `--bind 0.0.0.0` and open the firewall; the agent does not do TLS, so put a reverse proxy in front for that. Have the proxy send `127.0.0.1:<port>` as the Host header (nginx does by default; in Caddy use `header_up Host {upstream_hostport}`).
 - One password, `--rcon-password`, protects the HTTP API and RCON. Without one, the API answers `503` and RCON stays off.
 - After 10 wrong passwords in a minute, that address is refused for 5 minutes on both listeners. Local connections are never locked out.
-- Commands with line breaks or control characters are refused, and the log browser never serves hidden files or dot-files, which keeps the agent's own config out of reach.
+- Commands with line breaks or control characters are refused, and the log browser never serves hidden files, dot-files or links, which keeps the agent's own config and anything outside the logs folder out of reach.
 
 Report security problems privately, as described in [SECURITY.md](.github/SECURITY.md).
 
