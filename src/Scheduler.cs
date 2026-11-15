@@ -215,9 +215,12 @@ public sealed class Scheduler : IDisposable
         if (s.StartsWith("@every ", StringComparison.OrdinalIgnoreCase))
         {
             var spec = s[7..].Trim();
-            if (!TryParseDuration(spec, out var span)) { error = $"invalid duration: {spec}"; return false; }
-            if (span < TimeSpan.FromSeconds(1)) { error = "minimum @every is 1s"; return false; }
-            nextUtc = fromUtc + span;
+            if (!TryParseDuration(spec, out long seconds)) { error = $"invalid duration: {spec}"; return false; }
+            if (seconds < 1) { error = "minimum @every is 1s"; return false; }
+            // A number past the calendar is an answer, not an exception: an exception here came back as a 500 from
+            // POST /scheduler, and from a hand-edited jobs file it stopped the agent from starting.
+            if (seconds >= (long)(DateTime.MaxValue - fromUtc).TotalSeconds) { error = $"duration too long: {spec}"; return false; }
+            nextUtc = fromUtc + TimeSpan.FromTicks(seconds * TimeSpan.TicksPerSecond);
             return true;
         }
         try
@@ -235,20 +238,17 @@ public sealed class Scheduler : IDisposable
         }
     }
 
-    static bool TryParseDuration(string s, out TimeSpan span)
+    // In whole seconds, as a long: int.MaxValue hours is past TimeSpan's range, but fits a long.
+    static bool TryParseDuration(string s, out long seconds)
     {
-        span = TimeSpan.Zero;
+        seconds = 0;
         if (s.Length < 2) return false;
         char unit = char.ToLowerInvariant(s[^1]);
         if (!int.TryParse(s.AsSpan(0, s.Length - 1), out int n) || n <= 0) return false;
-        span = unit switch
-        {
-            's' => TimeSpan.FromSeconds(n),
-            'm' => TimeSpan.FromMinutes(n),
-            'h' => TimeSpan.FromHours(n),
-            _ => TimeSpan.Zero,
-        };
-        return span > TimeSpan.Zero;
+        long perUnit = unit switch { 's' => 1, 'm' => 60, 'h' => 3600, _ => 0 };
+        if (perUnit == 0) return false;
+        seconds = n * perUnit;
+        return true;
     }
 
     void Load()

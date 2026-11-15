@@ -252,6 +252,43 @@ public class PersistenceTests
         if (ok) Assert.True(next > from);
     }
 
+    [Theory]
+    [InlineData("@every 2147483647h")]   // past TimeSpan's range
+    [InlineData("@every 99999999h")]     // a TimeSpan, but past the last DateTime
+    [InlineData("@every 2147483647s")]   // 68 years: inside both ranges, so a plain answer
+    public void Scheduler_AHugeEveryIsAnAnswerNotAnException(string schedule)
+    {
+        var from = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var ex = Record.Exception(() => Scheduler.TryComputeNext(schedule, from, out _, out _));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Scheduler_AnEveryPastTheCalendarIsRefusedWithAReason()
+    {
+        var from = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Assert.False(Scheduler.TryComputeNext("@every 2147483647h", from, out _, out string tooBig));
+        Assert.Contains("too long", tooBig);
+        Assert.False(Scheduler.TryComputeNext("@every 99999999h", from, out _, out string pastCalendar));
+        Assert.Contains("too long", pastCalendar);
+    }
+
+    [Fact]
+    public void Scheduler_AFileHoldingAHugeEveryStillLoads()
+    {
+        using var s = new Scratch();
+        // Written by hand: the API refuses such a job, but a constructor that throws would stop the agent starting.
+        File.WriteAllText(s.File("sched.json"), """
+            {"jobs":[{"id":"far","schedule":"@every 2147483647h","command":"status","enabled":true},
+                     {"id":"near","schedule":"@every 5m","command":"status","enabled":true}]}
+            """);
+        var d = Deps(s, "--scheduler", s.File("sched.json"));
+        using var sched = new Scheduler(d.Cfg, d.Srv, d.Buf, d.Audit);
+        Assert.Equal(2, sched.All().Count);
+        Assert.Equal(DateTime.MaxValue, sched.NextFireFor("far"));
+        Assert.NotEqual(DateTime.MaxValue, sched.NextFireFor("near"));
+    }
+
     [Fact]
     public void Scheduler_EveryDurationsAreExact()
     {
