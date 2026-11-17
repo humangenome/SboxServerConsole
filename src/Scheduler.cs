@@ -74,14 +74,14 @@ public sealed class Scheduler : IDisposable
     {
         error = "";
         jobId = "";
-        if (string.IsNullOrWhiteSpace(schedule)) { error = "schedule required"; return false; }
-        if (string.IsNullOrWhiteSpace(command)) { error = "command required"; return false; }
-        if (!ServerProcess.IsSendableCommand(command)) { error = "command may not contain line breaks or control characters"; return false; }
+        if (string.IsNullOrWhiteSpace(schedule)) { error = "Add a schedule, like @every 30m."; return false; }
+        if (string.IsNullOrWhiteSpace(command)) { error = "Add the command to run."; return false; }
+        if (!ServerProcess.IsSendableCommand(command)) { error = "Commands can't contain line breaks or control characters."; return false; }
         // The id is optional: generate a short one when the caller does not name the job.
         if (string.IsNullOrWhiteSpace(id)) id = NewId();
         else if (id.Length > 64 || id.Any(c => c == '/' || char.IsWhiteSpace(c) || char.IsControl(c)))
         {
-            error = "id must be one token of at most 64 characters, without '/'";
+            error = "Job names are one word of up to 64 characters, with no '/'.";
             return false;
         }
         if (!TryComputeNext(schedule, DateTime.UtcNow, out _, out var perr)) { error = perr; return false; }
@@ -215,8 +215,8 @@ public sealed class Scheduler : IDisposable
         if (s.StartsWith("@every ", StringComparison.OrdinalIgnoreCase))
         {
             var spec = s[7..].Trim();
-            if (!TryParseDuration(spec, out long seconds)) { error = $"invalid duration: {spec}"; return false; }
-            if (seconds < 1) { error = "minimum @every is 1s"; return false; }
+            if (!TryParseDuration(spec, out long seconds)) { error = $"Couldn't read the timer \"{spec}\". Use a form like @every 30m."; return false; }
+            if (seconds < 1) { error = "@every needs at least 1s."; return false; }
             // A number past the calendar is an answer, not an exception: an exception here came back as a 500 from
             // POST /scheduler, and from a hand-edited jobs file it stopped the agent from starting.
             if (seconds >= (long)(DateTime.MaxValue - fromUtc).TotalSeconds) { error = $"duration too long: {spec}"; return false; }
@@ -227,13 +227,13 @@ public sealed class Scheduler : IDisposable
         {
             var expr = CronExpression.Parse(s);
             var next = expr.GetNextOccurrence(fromUtc);
-            if (next is null) { error = "cron expression has no future occurrence"; return false; }
+            if (next is null) { error = "That cron schedule never runs again."; return false; }
             nextUtc = next.Value;
             return true;
         }
         catch (CronFormatException ex)
         {
-            error = $"invalid cron: {ex.Message}";
+            error = $"Couldn't read that cron schedule: {ex.Message}";
             return false;
         }
     }

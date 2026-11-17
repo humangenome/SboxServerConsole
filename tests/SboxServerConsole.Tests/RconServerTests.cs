@@ -210,7 +210,7 @@ public class RconServerTests
         Assert.True(RconWire.TryRead(net, out int id, out int type, out string body));
         Assert.Equal(RconWire.ResponseValue, type);
         Assert.Equal(2, id);
-        Assert.Equal("child not running", body);
+        Assert.Equal("The server isn't running.", body);
 
         // Both the auth and the command are audited.
         var lines = File.ReadAllLines(rig.Cfg.AuditLogPath).Where(l => l.Length > 0).ToList();

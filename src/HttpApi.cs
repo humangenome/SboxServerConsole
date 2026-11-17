@@ -145,7 +145,7 @@ public sealed class HttpApi : IDisposable
     {
         if (string.IsNullOrEmpty(_cfg.RconPassword))
         {
-            Write(ctx, 503, "application/json", "{\"error\":\"rcon_password not configured\"}");
+            Write(ctx, 503, "application/json", "{\"error\":\"Set rcon-password in the config, then restart SboxServerConsole.\"}");
             return;
         }
         string? supplied = ctx.Request.Headers["X-RCON-Password"];
@@ -159,7 +159,7 @@ public sealed class HttpApi : IDisposable
         var remote = ctx.Request.RemoteEndPoint?.Address;
         if (_throttle.IsLockedOut(remote))
         {
-            Write(ctx, 429, "application/json", "{\"error\":\"too many wrong passwords from this address; try again later\"}");
+            Write(ctx, 429, "application/json", "{\"error\":\"Too many wrong passwords from this address. Wait a few minutes, then try again.\"}");
             return;
         }
         if (!PasswordCheck.Matches(supplied, _cfg.RconPassword))
@@ -228,11 +228,11 @@ public sealed class HttpApi : IDisposable
         }
         catch (JsonException) { Write(ctx, 400, "application/json", "{\"error\":\"invalid json\"}"); return; }
         if (string.IsNullOrWhiteSpace(cmd)) { Write(ctx, 400, "application/json", "{\"error\":\"cmd required\"}"); return; }
-        if (cmd.Length > 1024) { Write(ctx, 400, "application/json", "{\"error\":\"cmd too long\"}"); return; }
+        if (cmd.Length > 1024) { Write(ctx, 400, "application/json", "{\"error\":\"That command is too long (1,024 characters at most).\"}"); return; }
         // Line breaks and other control characters would reach the server console as
         // keystrokes; TrySendCommand refuses them, and the caller gets a clear 400 here
         // instead of a 503 that reads as "the server is down".
-        if (!ServerProcess.IsSendableCommand(cmd)) { Write(ctx, 400, "application/json", "{\"error\":\"cmd may not contain line breaks or control characters\"}"); return; }
+        if (!ServerProcess.IsSendableCommand(cmd)) { Write(ctx, 400, "application/json", "{\"error\":\"Commands can't contain line breaks or control characters.\"}"); return; }
 
         bool collect = ctx.Request.QueryString["collect"] is { } cv
             && (cv == "1" || cv.Equals("true", StringComparison.OrdinalIgnoreCase));
@@ -256,7 +256,7 @@ public sealed class HttpApi : IDisposable
 
         if (!ok)
         {
-            Write(ctx, 503, "application/json", "{\"error\":\"child not running\"}");
+            Write(ctx, 503, "application/json", "{\"error\":\"The server isn't running.\"}");
             return;
         }
         if (!collect)
@@ -333,7 +333,7 @@ public sealed class HttpApi : IDisposable
             ["client_ip"] = ctx.Request.RemoteEndPoint?.Address.ToString(),
             ["success"] = ok && !unknown,
         });
-        if (!ok) { Write(ctx, 503, "application/json", "{\"error\":\"child not running\"}"); return; }
+        if (!ok) { Write(ctx, 503, "application/json", "{\"error\":\"The server isn't running.\"}"); return; }
         if (unknown)
         {
             Write(ctx, 422, "application/json", "{\"error\":\"the running game has no say command, so chat broadcast is not available on it\"}");

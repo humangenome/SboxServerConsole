@@ -208,7 +208,7 @@ public sealed class ServerProcess : IDisposable
                 ? $"shell wrapper ({wrapperLabel}) started pid={_host.ChildProcessId}"
                 : $"child restarted pid={_host.ChildProcessId}");
             if (_host.FallbackReason is not null)
-                _buffer.Append("system", $"warn: no pseudo-terminal ({_host.FallbackReason}); the server will not read console commands, so commands, kicks, bans and the graceful quit cannot reach it");
+                _buffer.Append("system", $"Warning: couldn't open a terminal for the server ({_host.FallbackReason}). It won't read console commands, so commands, kicks, bans and the clean shutdown can't reach it.");
 
             try
             {

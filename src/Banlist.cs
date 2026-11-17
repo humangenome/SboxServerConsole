@@ -187,7 +187,7 @@ public sealed class Banlist : IDisposable
                 if (ConfirmFull(r.SteamId, alreadyOn)) { KickFull(r.SteamId, alreadyOn); return; }
             }
             try { OnPlayerJoin?.Invoke(p); } catch { }
-            _ = _discord.SendAsync("Player joined", $"{DiscordWebhook.Quote(DisplayName(r.Name, r.SteamId))} connected.", DiscordWebhook.ColorBlue);
+            _ = _discord.SendAsync("Player joined", $"{DiscordWebhook.Quote(DisplayName(r.Name, r.SteamId))} joined.", DiscordWebhook.ColorBlue);
         }
         else if (r.Kind == PlayerLineParser.Kind.Leave)
         {
@@ -202,7 +202,7 @@ public sealed class Banlist : IDisposable
             // Some builds print more than one line per disconnect; announce a leave once.
             if (!wasOnline) return;
             try { OnPlayerLeave?.Invoke(r.SteamId); } catch { }
-            _ = _discord.SendAsync("Player left", $"{DiscordWebhook.Quote(DisplayName(name, r.SteamId))} disconnected.", DiscordWebhook.ColorYellow);
+            _ = _discord.SendAsync("Player left", $"{DiscordWebhook.Quote(DisplayName(name, r.SteamId))} left.", DiscordWebhook.ColorYellow);
         }
     }
 
@@ -239,7 +239,7 @@ public sealed class Banlist : IDisposable
                 if (!_blindWarned && now - _a2sPlayersSince.Value >= BlindJoinGrace)
                 {
                     _blindWarned = true;
-                    warning = $"warn: A2S reports {players} player(s) but no join line has matched --connect-regex; the player roster, bans and the allowlist cannot see who joins on this server build";
+                    warning = $"Warning: the server reports {players} player(s), but no join line has matched --connect-regex. The player list, bans and the whitelist can't see who joins on this server version.";
                 }
             }
         }

@@ -205,7 +205,7 @@ public sealed class RconServer : IDisposable
                 });
                 if (!sent)
                 {
-                    SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "child not running");
+                    SendPacket(net, id, SERVERDATA_RESPONSE_VALUE, "The server isn't running.");
                     continue;
                 }
                 SendBodyChunked(net, id, reply);

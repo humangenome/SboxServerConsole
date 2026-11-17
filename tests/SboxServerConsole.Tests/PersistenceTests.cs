@@ -311,15 +311,15 @@ public class PersistenceTests
         using var sched = new Scheduler(d.Cfg, d.Srv, d.Buf, d.Audit);
 
         Assert.False(sched.TryAdd("x", "", "say hi", out string e2));
-        Assert.Equal("schedule required", e2);
+        Assert.Equal("Add a schedule, like @every 30m.", e2);
         Assert.False(sched.TryAdd("x", "@every 5m", "", out string e3));
-        Assert.Equal("command required", e3);
+        Assert.Equal("Add the command to run.", e3);
         Assert.False(sched.TryAdd("x", "nonsense", "say hi", out string e4));
-        Assert.Contains("invalid cron", e4);
+        Assert.Contains("Couldn't read that cron schedule", e4);
         Assert.False(sched.TryAdd("x", "@every 5m", "say hi\nquit", out string e5));
         Assert.Contains("line breaks", e5);
         Assert.False(sched.TryAdd("a/b", "@every 5m", "say hi", out string e6));
-        Assert.Contains("id must be", e6);
+        Assert.Contains("Job names are one word", e6);
         Assert.Empty(sched.All());
         Assert.False(File.Exists(s.File("sched.json")));
     }

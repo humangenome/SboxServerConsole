@@ -239,13 +239,13 @@ public sealed class CliConfig
         foreach (var key in raw.Keys)
         {
             if (!seen.Contains(key))
-                config.Warnings.Add($"unknown setting \"{key}\" was ignored (check the spelling; settings are kebab-case, like rcon-password)");
+                config.Warnings.Add($"Ignored the setting \"{key}\" because SboxServerConsole doesn't know it. Check the spelling: settings look like rcon-password.");
         }
         CheckRegex(config.Warnings, "connect-regex", connectLineRegex, "the player roster, bans and the allowlist will not see joins");
         CheckRegex(config.Warnings, "disconnect-regex", disconnectLineRegex, "the player roster will not see players leave");
         CheckRegex(config.Warnings, "suppress-regex", suppressLineRegex, "no output lines will be suppressed");
         if (string.IsNullOrEmpty(rconPassword))
-            config.Warnings.Add("rcon-password is empty: the HTTP API answers 503 on every authenticated route and Source RCON stays off");
+            config.Warnings.Add("rcon-password is empty, so you can't log in to the dashboard, the API or RCON until you set one.");
         return config;
     }
 
@@ -276,7 +276,7 @@ public sealed class CliConfig
     static void PrintHelp()
     {
         Console.Error.WriteLine("""
-            SboxServerConsole: process agent for sbox-server.exe
+            SboxServerConsole: RCON, a web console, bans and crash restarts for the s&box dedicated server
             Required:
               --game-dir <path>         server install/working directory
               --exe <path>              path to sbox-server.exe

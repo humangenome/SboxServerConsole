@@ -62,7 +62,7 @@ public class HttpApiTests
         using var h = ApiHost.Create("--rcon-password", "");
         var (status, body) = await h.Call("GET", "/status", password: null);
         Assert.Equal(503, status);
-        Assert.Contains("rcon_password not configured", body);
+        Assert.Contains("Set rcon-password in the config, then restart SboxServerConsole.", body);
 
         // Supplying anything at all must not open the door either.
         var (guessed, _) = await h.Call("GET", "/status", password: "");
@@ -173,7 +173,7 @@ public class HttpApiTests
 
         var (tooLong, tooLongBody) = await h.Call("POST", "/execute", json: JsonSerializer.Serialize(new { cmd = new string('a', 1025) }));
         Assert.Equal(400, tooLong);
-        Assert.Contains("cmd too long", tooLongBody);
+        Assert.Contains("That command is too long (1,024 characters at most).", tooLongBody);
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class HttpApiTests
         using var h = ApiHost.Create();
         var (status, body) = await h.Call("POST", "/execute", json: JsonSerializer.Serialize(new { cmd = "status" }));
         Assert.Equal(503, status);
-        Assert.Contains("child not running", body);
+        Assert.Contains("The server isn't running.", body);
 
         // The attempt is still audited, with success=false.
         var ev = Assert.Single(h.AuditEvents(), e => e.GetProperty("event").GetString() == "execute");
@@ -275,7 +275,7 @@ public class HttpApiTests
 
         var (bad, badBody) = await h.Call("POST", "/scheduler", json: JsonSerializer.Serialize(new { id = "x", schedule = "every-so-often", command = "say hi" }));
         Assert.Equal(400, bad);
-        Assert.Contains("invalid cron", badBody);
+        Assert.StartsWith("Couldn't read that cron schedule", JsonDocument.Parse(badBody).RootElement.GetProperty("error").GetString());
 
         var (add, _) = await h.Call("POST", "/scheduler", json: JsonSerializer.Serialize(new { id = "announce", schedule = "@every 1h", command = "say hi" }));
         Assert.Equal(200, add);

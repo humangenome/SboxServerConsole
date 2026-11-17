@@ -123,14 +123,14 @@ public sealed class A2SQuery : IDisposable
         _lastError = reason;
         // Until the first answer this is usually just the server still loading.
         _buffer.Append("system", _everAnswered
-            ? $"a2s: udp/{_cfg.QueryPort} stopped answering ({reason})"
-            : $"a2s: no answer yet on udp/{_cfg.QueryPort} ({reason}); normal while the server loads");
+            ? $"A2S: UDP port {_cfg.QueryPort} stopped answering ({reason})"
+            : $"A2S: no answer yet on UDP port {_cfg.QueryPort} ({reason}). This is normal while the server loads.");
     }
 
     void NoteSuccess()
     {
         if (_lastError is not null || !_everAnswered)
-            _buffer.Append("system", $"a2s: udp/{_cfg.QueryPort} answering");
+            _buffer.Append("system", $"A2S: answering on UDP port {_cfg.QueryPort}");
         _lastError = null;
         _everAnswered = true;
     }

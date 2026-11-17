@@ -48,7 +48,7 @@ public class CliConfigTests
     {
         using var s = new Scratch();
         var cfg = Configs.Parse(s.Dir, "--rcon-password", "x", "--shutdown-command", "quit", "--rcon-disabled");
-        Assert.DoesNotContain(cfg.Warnings, w => w.Contains("unknown setting"));
+        Assert.DoesNotContain(cfg.Warnings, w => w.Contains("doesn't know it"));
     }
 
     [Fact]
@@ -179,6 +179,6 @@ public class CliConfigTests
         Assert.Equal(0, Configs.Parse(s.Dir, "--max-players", "-3").MaxPlayers);
         Assert.Equal(0, Configs.Parse(s.Dir, "--max-players", "ten").MaxPlayers);
         Assert.Equal(10000, Configs.Parse(s.Dir, "--max-players", "999999").MaxPlayers);
-        Assert.DoesNotContain(Configs.Parse(s.Dir, "--max-players", "10").Warnings, w => w.Contains("unknown setting"));
+        Assert.DoesNotContain(Configs.Parse(s.Dir, "--max-players", "10").Warnings, w => w.Contains("doesn't know it"));
     }
 }
