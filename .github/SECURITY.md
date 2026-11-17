@@ -23,7 +23,7 @@ We aim to acknowledge reports within 72 hours and provide a triage update within
 
 In scope:
 - Authentication bypass on the RCON listener or any authenticated HTTP route
-- Unauthenticated access to data the public routes (`GET /`, `GET /health`) are not supposed to expose
+- Unauthenticated access to data the public routes (`GET /`, `GET /health`, `GET /version`) are not supposed to expose
 - Path traversal or arbitrary file read through `GET /logs/<name>`
 - Command injection through RCON input, `POST /execute`, `POST /chat`, or a scheduled command
 - Privilege escalation out of the supervised child process into the agent or the host
