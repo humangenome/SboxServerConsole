@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Fixed
 
-- **Bans and allowlist entries take only real Steam account IDs.** A SteamID64 must now be 17 plain digits (0-9) in the range Steam uses for personal accounts, including the newer ones that start 7656120. Before, any 17 digits were accepted, including digits from other writing systems, which never match a join line, so such a ban never took effect.
+- **Bans and the whitelist take only real SteamIDs.** A SteamID64 must now be 17 digits in the range Steam uses for personal accounts, newer ones starting 7656120 included. Before, any 17 digits were accepted, even digits from other alphabets, and such a ban never took effect.
 
 ## [1.6.2] - 2026-11-12
 

@@ -206,17 +206,15 @@ jobs:
             echo
             echo "## Download"
             echo
-            echo "- Windows (x64): \`SboxServerConsole.exe\` (single file) or \`SboxServerConsole-win-x64.zip\` (binary + scripts + examples)"
-            echo "- Linux (x64): \`SboxServerConsole-linux-x64.tar.gz\` (binary + examples + systemd unit)"
+            echo "- Windows (x64): \`SboxServerConsole.exe\` (single file) or \`SboxServerConsole-win-x64.zip\` (the program, scripts and examples)"
+            echo "- Linux (x64): \`SboxServerConsole-linux-x64.tar.gz\` (the program, examples and a systemd unit)"
             echo "- \`SHA256SUMS\` lists the SHA-256 of every file above."
             echo
-            echo "## Install / Upgrade"
+            echo "## Install or update"
             echo
-            echo "Drop the binary next to your s&box dedicated server install and launch it as documented in the [README](https://github.com/HumanGenome/SboxServerConsole#install). Replacing the binary keeps your bans, allowlist, scheduled jobs and audit log; they live in the files your config names."
+            echo "Put the program next to your s&box dedicated server and start it as the [README](https://github.com/HumanGenome/SboxServerConsole#install) shows. Replacing the program keeps your bans, whitelist, scheduled jobs and audit log, because they live in the files your config names."
             echo
-            echo "## Official Hosting"
-            echo
-            echo "Don't want to run your own server? [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=release&utm_campaign=sbox_console_v$utm_tag) offers s&box dedicated servers with SboxServerConsole pre-installed and panel-integrated."
+            echo "Hosting: [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/sbox/?utm_source=github&utm_medium=release&utm_campaign=sbox_console_v$utm_tag) runs SboxServerConsole for you."
           } > release_notes.md
 
       - name: Create GitHub Release
