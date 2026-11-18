@@ -4,6 +4,13 @@ All notable changes to SboxServerConsole are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.4] - 2026-11-18
+
+### Fixed
+
+- **A scheduled job with a huge timer no longer breaks the scheduler.** An `@every` longer than the calendar allows, such as `@every 2147483647h`, is now refused with a reason. Before, adding one answered with a server error, and a jobs file holding one stopped the agent from starting.
+- **The log browser no longer follows file links out of its folder.**
+
 ## [1.6.3] - 2026-11-16
 
 ### Fixed
