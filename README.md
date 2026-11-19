@@ -203,4 +203,4 @@ Pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the build and 
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The .NET runtime and Cronos are built into the program. Their licence notices are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which both release archives carry.
+MIT, see [LICENSE](LICENSE). The .NET runtime and Cronos are built into the program. Their license notices are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which both release archives carry.
